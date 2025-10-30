@@ -148,17 +148,34 @@ async function updateChunkedState(prefix: string, keySuffix: string, value: any)
     const hass = await getHassConnection();
     const jsonString = JSON.stringify(value);
     const numChunks = Math.ceil(jsonString.length / CHUNK_SIZE) || 1;
-    
+
     for (let i = 0; i < numChunks; i++) {
         const chunk = jsonString.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE) || '';
         const entityId = `${prefix}_${keySuffix}_${i}`;
-        
+
         await createEntity(hass, 'input_text', entityId, `${keySuffix} Chunk ${i}`);
-        
+
         await hass.callService('input_text', 'set_value', {
             entity_id: `input_text.${entityId}`,
             value: chunk
         });
+    }
+
+    // Clear any leftover chunks from previous writes to avoid stale data being re-read.
+    let clearIndex = numChunks;
+    while (true) {
+        const entityId = `input_text.${prefix}_${keySuffix}_${clearIndex}`;
+        const entity = hass.states[entityId];
+        if (!entity) {
+            break;
+        }
+
+        await hass.callService('input_text', 'set_value', {
+            entity_id: entityId,
+            value: ''
+        });
+
+        clearIndex++;
     }
 }
 
