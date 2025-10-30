@@ -1,87 +1,142 @@
-
-import React, { useMemo } from 'react';
-import { Reward } from '../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Reward, HistoryEntry, Reason } from '../types.ts';
+import PointsControl from './PointsControl.tsx';
 
 interface DashboardProps {
-  points: number;
+  points: number | null;
   rewards: Reward[];
+  reasons: Reason[];
+  history: HistoryEntry[];
+  onPointsChange: (change: number, description: string) => void;
+  onSetPoints: (value: number, description: string) => void;
 }
 
-const UnlockedIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-green-400" viewBox="0 0 20 20" fill="currentColor">
-        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-    </svg>
-);
-
-const NextGoalIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
-        <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-    </svg>
-);
+const formatReward = (reward: Reward): string => {
+  const parts = [
+    reward.name,
+    reward.value || '',
+    reward.unit || '',
+    reward.period || '',
+  ];
+  return parts.filter(p => String(p).trim() !== '').join(' ');
+};
 
 
-const Dashboard: React.FC<DashboardProps> = ({ points, rewards }) => {
-    const { unlockedRewards, nextGoal } = useMemo(() => {
-        const sortedRewards = [...rewards].sort((a, b) => a.threshold - b.threshold);
-        const currentUnlocked = sortedRewards.filter(r => points >= r.threshold);
+const Dashboard: React.FC<DashboardProps> = ({ points, rewards, reasons, history, onPointsChange, onSetPoints }) => {
+  const [animationClass, setAnimationClass] = useState('');
+  const prevPointsRef = useRef<number | null>(points);
+  
+  useEffect(() => {
+    if (prevPointsRef.current !== null && points !== null) {
+      if (points > prevPointsRef.current) {
+        setAnimationClass('animate-pointPulsePositive');
+      } else if (points < prevPointsRef.current) {
+        setAnimationClass('animate-pointPulseNegative');
+      }
+      
+      const timer = setTimeout(() => setAnimationClass(''), 600);
+      return () => clearTimeout(timer);
+    }
+    prevPointsRef.current = points;
+  }, [points]);
 
-        const rewardGroups = new Map<string, Reward>();
-        currentUnlocked.forEach(reward => {
-            const baseName = reward.name.split(' :: ')[0];
-            const existing = rewardGroups.get(baseName);
-            if (!existing || reward.threshold > existing.threshold) {
-                rewardGroups.set(baseName, reward);
-            }
-        });
+  const sortedRewards = [...rewards].sort((a, b) => a.threshold - b.threshold);
+  
+  // 1. Získání odemčených odměn s logikou "vyšší stupeň vítězí"
+  const getUnlockedRewards = (currentPoints: number | null, allRewards: Reward[]): Reward[] => {
+      if (currentPoints === null) return [];
 
-        const finalUnlocked = Array.from(rewardGroups.values());
-        
-        const currentNextGoal = sortedRewards.find(r => r.threshold > points) || null;
+      const unlocked = allRewards.filter(r => r.threshold <= currentPoints);
+      const groupedRewards: { [key: string]: Reward } = {};
 
-        return { unlockedRewards: finalUnlocked, nextGoal: currentNextGoal };
-    }, [points, rewards]);
+      for (const reward of unlocked) {
+          const groupName = reward.name.trim();
+          if (!groupedRewards[groupName] || reward.threshold > groupedRewards[groupName].threshold) {
+              groupedRewards[groupName] = reward;
+          }
+      }
+      return Object.values(groupedRewards).sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const unlockedRewards = getUnlockedRewards(points, rewards);
+
+  // 2. Nalezení dalšího cíle (nejbližší vyšší odměna)
+  const nextReward = points !== null ? sortedRewards.find(r => r.threshold > points) : undefined;
+  
+  const progress = (nextReward && points !== null)
+    ? (nextReward.threshold > 0 ? (points / nextReward.threshold) * 100 : 100)
+    : 0;
+
+  const recentHistory = [...history].slice(0, 5);
 
   return (
     <div className="space-y-8">
-        <div className="bg-gray-800 rounded-xl shadow-lg p-6 text-center">
-            <h2 className="text-lg font-medium text-gray-400">Aktuální počet bodů</h2>
-            <p className="text-7xl font-bold font-mono text-white my-2">{points}</p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        {/* Points Display */}
+        <div className="lg:col-span-2 bg-gray-800 rounded-xl shadow-lg p-6 text-center flex flex-col justify-center items-center">
+          <h2 className="text-2xl font-bold text-gray-400 mb-2">Aktuální skóre</h2>
+          <p className={`text-7xl font-mono font-bold text-white transition-colors duration-300 ${animationClass}`}>
+            {points === null ? '...' : points}
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-gray-800 rounded-xl shadow-lg p-6">
-                <h3 className="text-xl font-bold mb-4 flex items-center"><UnlockedIcon />Odemčené odměny</h3>
-                {unlockedRewards.length > 0 ? (
-                    <ul className="space-y-3">
-                        {unlockedRewards.map(reward => (
-                            <li key={reward.id} className="bg-gray-700/50 p-3 rounded-lg flex justify-between items-center">
-                                <span className="font-medium">{reward.name}</span>
-                                <span className="text-sm font-mono text-green-400">{reward.threshold} b.</span>
-                            </li>
-                        ))}
-                    </ul>
-                ) : (
+        {/* Points Control */}
+        <div className="lg:row-span-3">
+            <PointsControl reasons={reasons} onPointsChange={onPointsChange} onSetPoints={onSetPoints} disabled={points === null} />
+        </div>
+
+        {/* Unlocked Rewards */}
+        <div className="bg-gray-800 rounded-xl shadow-lg p-6">
+            <h3 className="text-xl font-bold mb-4">Odemčené odměny</h3>
+            <ul className="space-y-2">
+                {unlockedRewards.length > 0 ? unlockedRewards.map(reward => (
+                    <li key={reward.id} className="flex justify-between items-center bg-teal-900/50 p-2 rounded-md">
+                        <span className="font-semibold text-teal-300">{formatReward(reward)}</span>
+                    </li>
+                )) : (
                     <p className="text-gray-400">Žádné odměny nejsou odemčeny.</p>
                 )}
-            </div>
-
-            <div className="bg-gray-800 rounded-xl shadow-lg p-6">
-                <h3 className="text-xl font-bold mb-4 flex items-center"><NextGoalIcon />Další cíl</h3>
-                {nextGoal ? (
-                    <div>
-                        <div className="bg-gray-700/50 p-3 rounded-lg flex justify-between items-center">
-                            <span className="font-medium">{nextGoal.name}</span>
-                            <span className="text-sm font-mono text-yellow-400">{nextGoal.threshold} b.</span>
-                        </div>
-                        <p className="mt-4 text-center text-gray-300">
-                            Zbývá <span className="font-bold text-yellow-400 font-mono text-lg">{nextGoal.threshold - points}</span> bodů.
-                        </p>
-                    </div>
-                ) : (
-                    <p className="text-gray-400">Všechny odměny jsou odemčeny!</p>
-                )}
-            </div>
+            </ul>
         </div>
+
+        {/* Progress to Next Reward */}
+        <div className="bg-gray-800 rounded-xl shadow-lg p-6">
+          <h3 className="text-xl font-bold mb-4">Postup k další odměně</h3>
+          {points === null ? <p className="text-gray-400">Načítání...</p> : nextReward ? (
+            <div>
+              <div className="flex justify-between items-baseline mb-2">
+                <span className="font-semibold">{formatReward(nextReward)}</span>
+                <span className="text-sm font-mono text-gray-400">{points} / {nextReward.threshold} (zbývá {nextReward.threshold - points})</span>
+              </div>
+              <div className="w-full bg-gray-700 rounded-full h-4 overflow-hidden">
+                <div
+                  className="bg-teal-500 h-4 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(progress, 100)}%` }}
+                ></div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-400">{rewards.length > 0 ? "Všechny odměny jsou odemčeny! Gratulujeme!" : "Zatím nebyly nastaveny žádné odměny."}</p>
+          )}
+        </div>
+        
+        {/* Recent History */}
+        <div className="bg-gray-800 rounded-xl shadow-lg p-6">
+            <h3 className="text-xl font-bold mb-4">Poslední aktivita</h3>
+            <ul className="space-y-2">
+                {recentHistory.length > 0 ? recentHistory.map(entry => (
+                    <li key={entry.id} className="flex justify-between items-center text-sm">
+                        <span>{entry.description}</span>
+                        <span className={`font-mono font-bold ${entry.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {entry.change >= 0 ? '+' : ''}{entry.change}
+                        </span>
+                    </li>
+                )) : <p className="text-gray-400">Žádná aktivita.</p>}
+            </ul>
+        </div>
+
+      </div>
     </div>
   );
 };
