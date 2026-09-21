@@ -4,8 +4,8 @@
 [![HACS validation](https://github.com/Radioffka/score_system/actions/workflows/validate-and-release.yml/badge.svg)](https://github.com/Radioffka/score_system/actions/workflows/validate-and-release.yml)
 
 Bodík je lokální rodinný bodovací systém pro Home Assistant. Obsahuje profily,
-důvody bodových změn, odměny, historii a responzivní panel pro telefon, tablet
-i počítač.
+důvody bodových změn, periodické nároky, historii a responzivní panel pro telefon,
+tablet i počítač.
 
 Veškerá rodinná data zůstávají v privátním úložišti Home Assistantu. GitHub
 repozitář obsahuje pouze zdrojový kód integrace.
@@ -14,7 +14,7 @@ repozitář obsahuje pouze zdrojový kód integrace.
 
 - více samostatných profilů;
 - přidávání, odebírání a přesné nastavení bodů;
-- konfigurovatelné důvody a odměny;
+- konfigurovatelné důvody a jejich profilové kategorie;
 - stabilní ID důvodů, volitelné denní limity a serverově řízené použití;
 - konfigurovatelný denní strop kladných Offline bodů;
 - samostatné denní, týdenní a měsíční cíle pro každý profil;
@@ -69,7 +69,7 @@ přímo z GitHubu: HACS stáhne konkrétní release do Home Assistantu.
 ## Záloha a obnova dat
 
 Správce najde v záložce **Nastavení** sekci **Záloha a obnova**. Exportovaný
-JSON obsahuje všechny profily, aktuální skóre, pravidla, důvody, odměny,
+JSON obsahuje všechny profily, aktuální skóre, pravidla, důvody, kategorie,
 oprávnění a historii. Import obsah kompletně nahradí až po výslovném potvrzení
 a backend před uložením kontroluje jeho formát i oprávnění.
 
@@ -105,7 +105,7 @@ bez uživatelského kontextu zůstávají podporované.
 
 ## Datový model v9 a migrace
 
-Dlouhodobé `score`, historie a vlastní odměny zůstávají zachované. Bodík v9 ke
+Dlouhodobé `score` a historie zůstávají zachované. Bodík v9 ke
 každému profilu přidává `periodic_config` a `periodic`. Periodická část obsahuje
 čas zahájení sledování, explicitně způsobilé transakce, kurzory rozehraných
 období, neměnné uzavřené snapshoty, dnešní digitální nárok a aktivní týdenní
@@ -124,6 +124,12 @@ limit důvodů. Staré důvody dostanou při normalizaci ID, aniž by se změnil
 název, hodnota, historie nebo skóre. Rychlá tlačítka posílají backendu pouze ID;
 bodovou hodnotu, denní četnost a Offline strop vždy kontroluje backend podle
 lokálního dne Home Assistantu.
+
+Schéma v4 přidává ke každému profilu samostatné definice kategorií se stabilním
+ID, editovatelným názvem a pořadím. Kategorie `offline` si drží svůj sémantický
+význam i po přejmenování. Starý v8 katalog prahových odměn je při migraci uložen
+do skrytého `legacy_rewards` pouze pro datovou/rollback kompatibilitu; v aktivním
+rozhraní ani ve výpočtech v9.1 se nepoužívá.
 
 Při jednorázové migraci existujících profilů Tomášek a Kuba/Kubík se použije
 dohodnutá rodinná konfigurace z issue #3: 30 bodů denně, 120–180 minut,

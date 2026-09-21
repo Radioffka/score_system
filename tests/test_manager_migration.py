@@ -90,11 +90,12 @@ class ManagerMigrationTest(unittest.TestCase):
         }
         migrated = manager._normalize_stored_data(stored)
         profile = migrated["profiles"][0]
-        self.assertEqual(3, migrated["data_version"])
+        self.assertEqual(4, migrated["data_version"])
         self.assertEqual(17, migrated["revision"])
         self.assertEqual(42, profile["score"])
         self.assertEqual("Starý zápis", profile["history"][0]["desc"])
-        self.assertEqual("Výlet", profile["rewards"][0]["category"])
+        self.assertNotIn("rewards", profile)
+        self.assertEqual("Výlet", profile["legacy_rewards"][0]["category"])
         self.assertEqual([], profile["periodic"]["transactions"])
         self.assertTrue(profile["periodic"]["daily_initial_partial"])
         self.assertFalse(profile["history"][0]["counts_toward_periods"])
@@ -104,7 +105,7 @@ class ManagerMigrationTest(unittest.TestCase):
         manager = manager_module.BodikManager(hass)
         manager._time_zone = lambda: timezone.utc
         stored = {
-            "data_version": 3,
+            "data_version": 4,
             "profiles": [{"id": "child", "name": "Dítě", "score": 0, "reasons": [{"name": "Pomoc", "value": 2}]}],
         }
         first = manager._normalize_stored_data(stored)
@@ -149,7 +150,8 @@ class ManagerMigrationTest(unittest.TestCase):
         self.assertEqual(27, profile["score"])
         self.assertEqual("Původní +50", profile["history"][0]["desc"])
         self.assertEqual((-23, 27), (profile["history"][0]["prev"], profile["history"][0]["next"]))
-        self.assertEqual("Původní odměna", profile["rewards"][0]["category"])
+        self.assertNotIn("rewards", profile)
+        self.assertEqual("Původní odměna", profile["legacy_rewards"][0]["category"])
         self.assertEqual("Rodinná pravidla", profile["rules"])
         self.assertEqual("/local/tomas.jpg", profile["childPhotoUrl"])
         self.assertEqual("input_number.tomas", profile["scoreEntity"])
@@ -171,9 +173,12 @@ class ManagerMigrationTest(unittest.TestCase):
         self.assertEqual(8, profile["offline_daily_cap"])
         reasons = {item["name"]: item for item in profile["reasons"]}
         canonical = family_module.family_reasons()
+        canonical_categories = family_module.family_reason_categories()
         self.assertEqual(44, len(profile["reasons"]))
         self.assertEqual(canonical, profile["reasons"])
         self.assertEqual(canonical, second_profile["reasons"])
+        self.assertEqual(canonical_categories, profile["reason_categories"])
+        self.assertEqual(canonical_categories, second_profile["reason_categories"])
         self.assertNotIn("Vlastní původní důvod", reasons)
         self.assertNotIn("Jednička z tělocviku", reasons)
         self.assertNotIn("Aktivita", reasons)
@@ -220,12 +225,115 @@ class ManagerMigrationTest(unittest.TestCase):
         manager = manager_module.BodikManager(hass)
         manager._time_zone = lambda: timezone.utc
         normalized = manager._normalize_stored_data(
-            {"data_version": 3, "profiles": [{"id": "new", "name": "Tomášek", "score": 0}]}
+            {"data_version": 4, "profiles": [{"id": "new", "name": "Tomášek", "score": 0}]}
         )
         profile = normalized["profiles"][0]
         self.assertEqual(1, profile["periodic_config"]["daily_target"])
         self.assertEqual([], profile["reasons"])
         self.assertIsNone(profile["offline_daily_cap"])
+
+    def test_v9_category_migration_preserves_periodic_state_and_is_idempotent(self) -> None:
+        hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
+        manager = manager_module.BodikManager(hass)
+        manager._time_zone = lambda: timezone.utc
+        baseline = manager._normalize_stored_data({
+            "data_version": 4,
+            "profiles": [{
+                "id": "child", "name": "Dítě", "score": 9,
+                "reasons": [{"id": "stable", "name": "Sport", "value": 4, "category": "offline"}],
+            }],
+        })
+        profile = baseline["profiles"][0]
+        profile.pop("reason_categories")
+        profile["periodic"]["transactions"].append({
+            "id": "tx", "time": "2026-09-21T10:00:00+00:00", "delta": 4,
+            "kind": "reason", "counts_toward_periods": True,
+            "reason_id": "stable", "category": "offline",
+        })
+        profile["periodic"]["today_digital_entitlement"] = 135
+        baseline["data_version"] = 3
+
+        migrated = manager._normalize_stored_data(baseline)
+        migrated_profile = migrated["profiles"][0]
+        self.assertEqual(profile["periodic"], migrated_profile["periodic"])
+        self.assertEqual("stable", migrated_profile["reasons"][0]["id"])
+        self.assertEqual(
+            {"school", "home", "behaviour", "offline", "digital"},
+            {item["id"] for item in migrated_profile["reason_categories"]},
+        )
+        self.assertEqual(
+            migrated_profile["reason_categories"],
+            manager._normalize_stored_data(migrated)["profiles"][0]["reason_categories"],
+        )
+
+    def test_category_rename_and_delete_keep_reason_ids_and_records(self) -> None:
+        hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
+        manager = manager_module.BodikManager(hass)
+        manager._time_zone = lambda: timezone.utc
+        stored = manager._normalize_stored_data({
+            "data_version": 4,
+            "profiles": [{
+                "id": "child", "name": "Dítě", "score": 0,
+                "reason_categories": [
+                    {"id": "offline", "name": "Bez obrazovky", "order": 5},
+                    {"id": "chores", "name": "Povinnosti", "order": 10},
+                ],
+                "reasons": [
+                    {"id": "sport", "name": "Sport", "value": 4, "category": "offline"},
+                    {"id": "dish", "name": "Nádobí", "value": 2, "category": "chores"},
+                ],
+            }],
+        })
+        edited = stored["profiles"][0]
+        edited["reason_categories"][0]["name"] = "Pohyb bez obrazovky"
+        edited["reason_categories"] = [item for item in edited["reason_categories"] if item["id"] != "chores"]
+        for reason in edited["reasons"]:
+            if reason["category"] == "chores":
+                reason["category"] = ""
+        normalized = manager._normalize_stored_data(stored)["profiles"][0]
+        self.assertEqual(["sport", "dish"], [item["id"] for item in normalized["reasons"]])
+        self.assertEqual("Pohyb bez obrazovky", normalized["reason_categories"][0]["name"])
+        self.assertEqual("", normalized["reasons"][1]["category"])
+
+    def test_backup_round_trip_preserves_categories_and_hidden_legacy_rewards(self) -> None:
+        hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
+        manager = manager_module.BodikManager(hass)
+        manager._time_zone = lambda: timezone.utc
+        first = manager._normalize_stored_data({
+            "data_version": 3,
+            "profiles": [{
+                "id": "child", "name": "Dítě", "score": 12,
+                "reasons": [{"id": "read", "name": "Čtení", "value": 2, "category": "offline"}],
+                "rewards": [{"id": "old-tv", "category": "Televize", "threshold": 20}],
+            }],
+        })
+        second = manager._normalize_stored_data(first)
+        self.assertEqual(first["profiles"][0]["reason_categories"], second["profiles"][0]["reason_categories"])
+        self.assertEqual(first["profiles"][0]["legacy_rewards"], second["profiles"][0]["legacy_rewards"])
+        self.assertNotIn("rewards", second["profiles"][0])
+
+    def test_generated_rules_use_live_configuration(self) -> None:
+        hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
+        manager = manager_module.BodikManager(hass)
+        manager._time_zone = lambda: timezone.utc
+        profile = manager._normalize_stored_data({
+            "data_version": 4,
+            "profiles": [{
+                "id": "child", "name": "Dítě", "offline_daily_cap": 6,
+                "periodic_config": {
+                    "daily_target": 17, "base_digital_minutes": 45,
+                    "bonus_step_points": 4, "bonus_step_minutes": 7,
+                    "max_digital_minutes": 73, "weekly_target": 91,
+                    "weekly_tick_weekday": 2, "weekly_tick_time": "16:30",
+                    "monthly_target": 333, "allowance_at_100": 90,
+                    "max_payout_percent": 120,
+                },
+            }],
+        })["profiles"][0]
+        summary = manager.generated_rules_summary(profile)
+        for expected in ("17 bodů", "45 minut", "4 bodů", "+7 minut", "73 minut", "91 bodů", "středu", "16:30", "333 bodů", "90 Kč", "108 Kč", "6 kladných"):
+            self.assertIn(expected, summary)
+        self.assertNotIn("30 bodů", summary)
 
 
 class ReasonApplicationTest(unittest.IsolatedAsyncioTestCase):
@@ -239,17 +347,18 @@ class ReasonApplicationTest(unittest.IsolatedAsyncioTestCase):
         manager._time_zone = lambda: zone
         manager.store = types.SimpleNamespace(async_save=AsyncMock())
         manager.data = manager._normalize_stored_data(
-            {"data_version": 3, "revision": 1, "profiles": profiles}
+            {"data_version": 4, "revision": 1, "profiles": profiles}
         )
         return manager
 
-    def profile(self, profile_id, reasons, *, offline_cap=None):
+    def profile(self, profile_id, reasons, *, offline_cap=None, categories=None):
         return {
             "id": profile_id,
             "name": profile_id,
             "score": 0,
             "reasons": reasons,
             "offline_daily_cap": offline_cap,
+            "reason_categories": categories or [],
         }
 
     async def test_apply_reason_uses_server_value_and_enforces_daily_limit(self) -> None:
@@ -308,6 +417,24 @@ class ReasonApplicationTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(manager_module.BodikValidationError, "Offline limit"):
             await manager.async_apply_reason("alpha", "outside", "Parent", now)
         self.assertEqual(8, manager._profile("alpha")["score"])
+
+    async def test_offline_cap_uses_stable_id_after_visible_category_rename(self) -> None:
+        manager = self.make_manager([
+            self.profile(
+                "alpha",
+                [
+                    {"id": "sport", "name": "Sport", "value": 5, "category": "offline"},
+                    {"id": "walk", "name": "Procházka", "value": 4, "category": "offline"},
+                ],
+                offline_cap=8,
+                categories=[{"id": "offline", "name": "Pohyb bez obrazovky", "order": 1}],
+            )
+        ])
+        now = manager_module.datetime.fromisoformat("2026-09-21T10:00:00+00:00")
+        await manager.async_apply_reason("alpha", "sport", "Parent", now)
+        with self.assertRaisesRegex(manager_module.BodikValidationError, "Offline limit"):
+            await manager.async_apply_reason("alpha", "walk", "Parent", now)
+        self.assertEqual("Pohyb bez obrazovky", manager._profile("alpha")["reason_categories"][0]["name"])
 
 
 if __name__ == "__main__":

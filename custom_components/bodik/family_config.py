@@ -13,6 +13,14 @@ import unicodedata
 FAMILY_CONFIG_VERSION = 1
 FAMILY_PROFILE_NAMES = {"tomasek", "kuba", "kubik"}
 
+FAMILY_REASON_CATEGORIES = [
+    {"id": "school", "name": "Škola", "order": 10},
+    {"id": "home", "name": "Domov", "order": 20},
+    {"id": "behaviour", "name": "Chování", "order": 30},
+    {"id": "offline", "name": "Offline aktivity", "order": 40},
+    {"id": "digital", "name": "Digitální disciplína", "order": 50},
+]
+
 
 def _reason(
     reason_id: str,
@@ -116,3 +124,8 @@ def family_periodic_config() -> dict[str, Any]:
 def family_reasons() -> list[dict[str, Any]]:
     """Return a mutable copy of the agreed reasons."""
     return deepcopy(FAMILY_REASONS)
+
+
+def family_reason_categories() -> list[dict[str, Any]]:
+    """Return the stable semantic categories used by the family model."""
+    return deepcopy(FAMILY_REASON_CATEGORIES)
