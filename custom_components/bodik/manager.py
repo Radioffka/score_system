@@ -26,6 +26,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import (
     DOMAIN,
+    DATA_VERSION,
     EVENT_UPDATED,
     LEGACY_RELATIVE_PATH,
     MAX_ABS_SCORE,
@@ -36,6 +37,12 @@ from .const import (
     MAX_REWARDS,
     STORAGE_KEY,
     STORAGE_VERSION,
+)
+from .family_config import (
+    FAMILY_CONFIG_VERSION,
+    family_periodic_config,
+    family_reasons,
+    is_family_profile,
 )
 from .periodic import (
     PeriodicValidationError,
@@ -75,6 +82,25 @@ def _integer(value: Any, default: int = 0) -> int:
     except (TypeError, ValueError, OverflowError):
         result = default
     return max(-MAX_ABS_SCORE, min(MAX_ABS_SCORE, result))
+
+
+def _optional_positive_integer(value: Any, label: str) -> int | None:
+    """Return a strict optional positive integer from untrusted config."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise BodikValidationError(f"{label} musí být kladné celé číslo.")
+    try:
+        result = int(value)
+        if float(value) != result:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError) as err:
+        raise BodikValidationError(
+            f"{label} musí být kladné celé číslo."
+        ) from err
+    if not 1 <= result <= MAX_ABS_SCORE:
+        raise BodikValidationError(f"{label} musí být kladné celé číslo.")
+    return result
 
 
 def _now_iso() -> str:
@@ -127,15 +153,18 @@ class BodikManager:
         """Normalize persisted data without trusting its shape blindly."""
         profiles: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
+        apply_family_seed = _integer(stored.get("data_version"), 1) < DATA_VERSION
         for raw in stored.get("profiles", [])[:MAX_PROFILES]:
             if not isinstance(raw, dict):
                 continue
-            profile = self._sanitize_profile(raw, None, seen_ids)
+            profile = self._sanitize_profile(
+                raw, None, seen_ids, apply_family_seed=apply_family_seed
+            )
             profiles.append(profile)
             seen_ids.add(profile["id"])
 
         return {
-            "data_version": 2,
+            "data_version": DATA_VERSION,
             "revision": max(1, _integer(stored.get("revision"), 1)),
             "profiles": profiles,
             "admin_user_ids": [
@@ -185,7 +214,7 @@ class BodikManager:
         for raw in raw_profiles[:MAX_PROFILES]:
             if not isinstance(raw, dict):
                 continue
-            profile = self._sanitize_profile(raw, None, seen_ids)
+            profile = self._sanitize_profile(raw, None, seen_ids, apply_family_seed=True)
             seen_ids.add(profile["id"])
 
             history_score = profile["score"]
@@ -211,7 +240,7 @@ class BodikManager:
             profiles.append(profile)
 
         return {
-            "data_version": 2,
+            "data_version": DATA_VERSION,
             "revision": 1,
             "profiles": profiles,
             "admin_user_ids": admin_user_ids,
@@ -248,6 +277,7 @@ class BodikManager:
         raw: dict[str, Any],
         existing: dict[str, Any] | None,
         seen_ids: set[str],
+        apply_family_seed: bool = False,
     ) -> dict[str, Any]:
         """Validate profile configuration and preserve server-owned ledger fields."""
         raw_id = _text(raw.get("id"), 64)
@@ -261,7 +291,13 @@ class BodikManager:
         if theme not in {"auto", "dark", "light"}:
             theme = "auto"
 
+        should_seed_family = (
+            apply_family_seed
+            and is_family_profile(name)
+            and _integer(raw.get("family_config_version"), 0) < FAMILY_CONFIG_VERSION
+        )
         reasons: list[dict[str, Any]] = []
+        seen_reason_ids: set[str] = set()
         raw_reasons = raw.get("reasons", [])
         if isinstance(raw_reasons, list):
             for item in raw_reasons[:MAX_REASONS]:
@@ -269,7 +305,41 @@ class BodikManager:
                     continue
                 reason_name = _text(item.get("name"), 120)
                 if reason_name:
-                    reasons.append({"name": reason_name, "value": _integer(item.get("value"))})
+                    reason_id = _text(item.get("id"), 64)
+                    if not _ID_RE.fullmatch(reason_id) or reason_id in seen_reason_ids:
+                        reason_id = uuid4().hex
+                    seen_reason_ids.add(reason_id)
+                    limit = _optional_positive_integer(
+                        item.get("max_occurrences_per_day"),
+                        f"Denní limit důvodu „{reason_name}“",
+                    )
+                    reasons.append(
+                        {
+                            "id": reason_id,
+                            "name": reason_name,
+                            "value": _integer(item.get("value")),
+                            "max_occurrences_per_day": limit,
+                            "category": _text(item.get("category"), 40),
+                        }
+                    )
+
+        if should_seed_family:
+            by_name = {item["name"].casefold(): item for item in reasons}
+            for seeded in family_reasons():
+                existing_reason = by_name.get(seeded["name"].casefold())
+                if existing_reason:
+                    existing_reason.update(
+                        {
+                            "value": seeded["value"],
+                            "max_occurrences_per_day": seeded["max_occurrences_per_day"],
+                            "category": seeded["category"],
+                        }
+                    )
+                elif len(reasons) < MAX_REASONS:
+                    if seeded["id"] in seen_reason_ids:
+                        seeded["id"] = uuid4().hex
+                    reasons.append(seeded)
+                    seen_reason_ids.add(seeded["id"])
 
         rewards: list[dict[str, Any]] = []
         raw_rewards = raw.get("rewards", [])
@@ -297,7 +367,9 @@ class BodikManager:
                 )
 
         try:
-            periodic_config = validate_config(raw.get("periodic_config"))
+            periodic_config = validate_config(
+                family_periodic_config() if should_seed_family else raw.get("periodic_config")
+            )
         except PeriodicValidationError as err:
             raise BodikValidationError(str(err)) from err
 
@@ -327,7 +399,19 @@ class BodikManager:
             "score": score,
             "periodic_config": periodic_config,
             "periodic": periodic,
+            "offline_daily_cap": 8 if should_seed_family else self._sanitize_offline_cap(
+                raw.get("offline_daily_cap")
+            ),
+            "family_config_version": (
+                FAMILY_CONFIG_VERSION
+                if should_seed_family
+                else max(0, _integer(raw.get("family_config_version"), 0))
+            ),
         }
+
+    def _sanitize_offline_cap(self, value: Any) -> int | None:
+        """Validate the optional positive Offline-category daily point cap."""
+        return _optional_positive_integer(value, "Denní Offline limit")
 
     def _time_zone(self):
         """Return Home Assistant's configured local timezone."""
@@ -376,6 +460,8 @@ class BodikManager:
                             "delta": _integer(item.get("delta")),
                             "kind": _text(item.get("kind"), 40, "adjust_score"),
                             "counts_toward_periods": bool(item.get("counts_toward_periods", False)),
+                            "reason_id": _text(item.get("reason_id"), 64) or None,
+                            "category": _text(item.get("category"), 40) or None,
                         }
                     )
             for key in ("daily_results", "weekly_results", "monthly_results"):
@@ -410,6 +496,8 @@ class BodikManager:
                     "user": _text(item.get("user"), 120, "Neznámý"),
                     "kind": _text(item.get("kind"), 40, "legacy"),
                     "counts_toward_periods": bool(item.get("counts_toward_periods", False)),
+                    "reason_id": _text(item.get("reason_id"), 64) or None,
+                    "category": _text(item.get("category"), 40) or None,
                 }
             )
         return result
@@ -417,9 +505,11 @@ class BodikManager:
     def _history_entry(
         self, reason: str, delta: int, previous: int, following: int, user: str,
         kind: str = "adjust_score", counts_toward_periods: bool = True,
+        reason_id: str | None = None, category: str | None = None,
+        occurred_at: datetime | None = None,
     ) -> dict[str, Any]:
         return {
-            "time": _now_iso(),
+            "time": iso_utc(occurred_at or datetime.now(timezone.utc)),
             "desc": _text(reason, 250, "Změna bodů"),
             "delta": delta,
             "prev": previous,
@@ -427,6 +517,8 @@ class BodikManager:
             "user": _text(user, 120, "Home Assistant"),
             "kind": _text(kind, 40, "adjust_score"),
             "counts_toward_periods": counts_toward_periods,
+            "reason_id": reason_id,
+            "category": category,
         }
 
     def _profile(self, identifier: str) -> dict[str, Any]:
@@ -441,6 +533,77 @@ class BodikManager:
             if lookup in identifiers:
                 return profile
         raise BodikValidationError(f"Profil nebyl nalezen: {identifier}")
+
+    def _configured_reason(
+        self, profile: dict[str, Any], reason_id: str
+    ) -> dict[str, Any]:
+        """Resolve one configured reason by its stable server-owned ID."""
+        for reason in profile.get("reasons", []):
+            if reason["id"] == reason_id:
+                return reason
+        raise BodikValidationError("Vybraný důvod již neexistuje. Obnovte stránku.")
+
+    def _daily_reason_usage(
+        self, profile: dict[str, Any], now: datetime
+    ) -> tuple[dict[str, int], int]:
+        """Count accepted reason uses and positive Offline points today."""
+        local_day = now.astimezone(self._time_zone()).date()
+        counts: dict[str, int] = {}
+        offline_points = 0
+        for item in profile["periodic"].get("transactions", []):
+            if item.get("kind") != "reason":
+                continue
+            reason_id = item.get("reason_id")
+            if not reason_id:
+                continue
+            try:
+                item_day = parse_utc(str(item["time"])).astimezone(
+                    self._time_zone()
+                ).date()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if item_day != local_day:
+                continue
+            counts[reason_id] = counts.get(reason_id, 0) + 1
+            if item.get("category") == "offline":
+                offline_points += max(0, _integer(item.get("delta")))
+        return counts, offline_points
+
+    def reason_status(
+        self, profile: dict[str, Any], now: datetime | None = None
+    ) -> dict[str, Any]:
+        """Return backend-derived per-reason availability for the current local day."""
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        counts, offline_points = self._daily_reason_usage(profile, now)
+        offline_cap = profile.get("offline_daily_cap")
+        result: dict[str, Any] = {}
+        for reason in profile.get("reasons", []):
+            used = counts.get(reason["id"], 0)
+            limit = reason.get("max_occurrences_per_day")
+            available = limit is None or used < limit
+            message = None
+            if not available:
+                message = f"Denní limit {limit}× byl dosažen."
+            if (
+                available
+                and reason.get("category") == "offline"
+                and offline_cap is not None
+                and reason["value"] > 0
+                and offline_points + reason["value"] > offline_cap
+            ):
+                available = False
+                message = f"Denní Offline limit {offline_cap} bodů by byl překročen."
+            result[reason["id"]] = {
+                "used_today": used,
+                "limit": limit,
+                "available": available,
+                "message": message,
+            }
+        return {
+            "reasons": result,
+            "offline_points_today": offline_points,
+            "offline_daily_cap": offline_cap,
+        }
 
     async def async_can_manage(self, user_id: str | None) -> bool:
         """Return whether a HA user may mutate Bodik."""
@@ -464,6 +627,7 @@ class BodikManager:
             profile["periodic_status"] = current_status(
                 profile["periodic"], profile["periodic_config"], now, zone
             )
+            profile["reason_status"] = self.reason_status(profile, now)
         if not can_manage:
             client_data["admin_user_ids"] = []
         payload: dict[str, Any] = {
@@ -490,6 +654,7 @@ class BodikManager:
         self,
         raw_profiles: Any,
         existing_by_id: dict[str, dict[str, Any]] | None = None,
+        apply_family_seed: bool = False,
     ) -> list[dict[str, Any]]:
         """Validate a complete profile collection and its unique fields."""
         if not isinstance(raw_profiles, list) or not raw_profiles:
@@ -507,7 +672,12 @@ class BodikManager:
             if not isinstance(raw_profile, dict):
                 raise BodikValidationError("Neplatná konfigurace profilu.")
             existing = existing_by_id.get(_text(raw_profile.get("id"), 64))
-            profile = self._sanitize_profile(raw_profile, existing, seen_ids)
+            profile = self._sanitize_profile(
+                raw_profile,
+                existing,
+                seen_ids,
+                apply_family_seed=apply_family_seed,
+            )
             normalized_name = profile["name"].casefold()
             if normalized_name in seen_names:
                 raise BodikValidationError(
@@ -574,7 +744,7 @@ class BodikManager:
             )
 
             self.data = {
-                "data_version": 2,
+                "data_version": DATA_VERSION,
                 "revision": self.data["revision"] + 1,
                 "profiles": profiles,
                 "admin_user_ids": admin_user_ids,
@@ -614,12 +784,17 @@ class BodikManager:
                     "Data byla mezitím změněna v jiném panelu. Obnovte stránku a import zopakujte."
                 )
 
-            profiles = self._sanitize_profile_collection(raw_data.get("profiles", []))
+            profiles = self._sanitize_profile_collection(
+                raw_data.get("profiles", []),
+                apply_family_seed=(
+                    _integer(raw_data.get("data_version"), 1) < DATA_VERSION
+                ),
+            )
             admin_user_ids = await self._valid_manager_user_ids(
                 raw_data.get("admin_user_ids", [])
             )
             self.data = {
-                "data_version": 2,
+                "data_version": DATA_VERSION,
                 "revision": self.data["revision"] + 1,
                 "profiles": profiles,
                 "admin_user_ids": admin_user_ids,
@@ -652,6 +827,49 @@ class BodikManager:
             self._fire_updated("score", result["profile"]["id"])
         return result["profile"]
 
+    async def async_apply_reason(
+        self,
+        identifier: str,
+        reason_id: str,
+        user: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Apply a configured reason by ID with server-owned value and limits."""
+        occurred_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        async with self._lock:
+            profile = self._profile(identifier)
+            reason = self._configured_reason(profile, reason_id)
+            usage = self.reason_status(profile, occurred_at)
+            reason_usage = usage["reasons"][reason_id]
+            if not reason_usage["available"]:
+                raise BodikValidationError(
+                    f"Důvod „{reason['name']}“ nelze použít: {reason_usage['message']}"
+                )
+
+            previous = _integer(profile["score"])
+            following = self._clamp_for_entity(
+                profile, previous + _integer(reason["value"])
+            )
+            result = await self._async_commit_score_locked(
+                profile,
+                previous,
+                following,
+                reason["name"],
+                user,
+                kind="reason",
+                counts_toward_periods=True,
+                reason_id=reason["id"],
+                category=reason.get("category") or None,
+                occurred_at=occurred_at,
+                record_unchanged=True,
+            )
+
+        if result["changed"]:
+            await self._async_sync_mirror(result["profile"])
+        if result["recorded"]:
+            self._fire_updated("reason", result["profile"]["id"])
+        return result["profile"]
+
     async def async_set_score(
         self, identifier: str, value: int, reason: str, user: str
     ) -> dict[str, Any]:
@@ -679,15 +897,20 @@ class BodikManager:
         user: str,
         kind: str,
         counts_toward_periods: bool,
+        reason_id: str | None = None,
+        category: str | None = None,
+        occurred_at: datetime | None = None,
+        record_unchanged: bool = False,
     ) -> dict[str, Any]:
         """Persist one score mutation while the caller holds ``self._lock``."""
-        if following == previous:
-            return {"changed": False, "profile": deepcopy(profile)}
+        changed = following != previous
+        if not changed and not record_unchanged:
+            return {"changed": False, "recorded": False, "profile": deepcopy(profile)}
 
         profile["score"] = following
         entry = self._history_entry(
             reason, following - previous, previous, following, user,
-            kind, counts_toward_periods,
+            kind, counts_toward_periods, reason_id, category, occurred_at,
         )
         profile["history"].append(entry)
         profile["history"] = profile["history"][-MAX_HISTORY:]
@@ -698,12 +921,14 @@ class BodikManager:
                 "delta": entry["delta"],
                 "kind": kind,
                 "counts_toward_periods": counts_toward_periods,
+                "reason_id": reason_id,
+                "category": category,
             }
         )
         self.data["revision"] += 1
         self.data["updated_at"] = _now_iso()
         await self.store.async_save(self.data)
-        return {"changed": True, "profile": deepcopy(profile)}
+        return {"changed": changed, "recorded": True, "profile": deepcopy(profile)}
 
     async def async_clear_history(self, profile_id: str, user_id: str) -> dict[str, Any]:
         """Clear history without changing the current score."""

@@ -16,6 +16,7 @@ from .const import (
     DOMAIN,
     MAX_ABS_SCORE,
     SERVICE_ADJUST_SCORE,
+    SERVICE_APPLY_REASON,
     SERVICE_GET_INFO,
     SERVICE_READ_PERIODIC,
     SERVICE_READ_SCORES,
@@ -168,6 +169,36 @@ async def websocket_adjust_score(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "bodik/apply_reason",
+        vol.Required("profile_id"): PROFILE_FIELD,
+        vol.Required("reason_id"): vol.All(cv.string, vol.Length(min=1, max=64)),
+    }
+)
+@websocket_api.async_response
+async def websocket_apply_reason(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Apply a configured reason using its server-owned value and limits."""
+    manager: BodikManager = hass.data[DOMAIN]
+    user_id = await _require_manager_permission(connection, msg["id"], manager)
+    if user_id is None:
+        return
+    try:
+        result = await manager.async_apply_reason(
+            msg["profile_id"],
+            msg["reason_id"],
+            await manager.async_user_name(user_id),
+        )
+    except Exception as err:
+        _send_exception(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], {"profile": result})
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "bodik/set_score",
         vol.Required("profile_id"): PROFILE_FIELD,
         vol.Required("value"): SCORE_FIELD,
@@ -231,6 +262,7 @@ def async_register_websocket_commands(
     websocket_api.async_register_command(hass, websocket_save_config)
     websocket_api.async_register_command(hass, websocket_import_backup)
     websocket_api.async_register_command(hass, websocket_adjust_score)
+    websocket_api.async_register_command(hass, websocket_apply_reason)
     websocket_api.async_register_command(hass, websocket_set_score)
     websocket_api.async_register_command(hass, websocket_clear_history)
 
@@ -247,6 +279,12 @@ SET_SCHEMA = vol.Schema(
         vol.Required("profile"): PROFILE_FIELD,
         vol.Required("value"): SCORE_FIELD,
         vol.Optional("reason", default="Nastavení přes službu Home Assistantu"): REASON_FIELD,
+    }
+)
+APPLY_REASON_SCHEMA = vol.Schema(
+    {
+        vol.Required("profile"): PROFILE_FIELD,
+        vol.Required("reason_id"): vol.All(cv.string, vol.Length(min=1, max=64)),
     }
 )
 
@@ -286,6 +324,15 @@ def async_register_services(hass: HomeAssistant, manager: BodikManager) -> None:
         )
         return {"profile": profile, **manager.scores_response()}
 
+    async def handle_apply_reason(call: ServiceCall) -> dict[str, Any]:
+        await _require_service_manager_permission(call, manager)
+        profile = await manager.async_apply_reason(
+            call.data["profile"],
+            call.data["reason_id"],
+            await manager.async_user_name(call.context.user_id),
+        )
+        return {"profile": profile, **manager.scores_response()}
+
     async def handle_info(_call: ServiceCall) -> dict[str, Any]:
         await manager.async_close_elapsed_periods()
         return manager.info_response()
@@ -310,6 +357,13 @@ def async_register_services(hass: HomeAssistant, manager: BodikManager) -> None:
         SERVICE_SET_SCORE,
         handle_set,
         schema=SET_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_APPLY_REASON,
+        handle_apply_reason,
+        schema=APPLY_REASON_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(

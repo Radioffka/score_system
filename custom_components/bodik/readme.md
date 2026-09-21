@@ -10,10 +10,14 @@ Obsahuje profily dětí, důvody bodových změn, odměny a historii.
 - Zápis je povolen jen administrátorům Home Assistantu a uživatelům vybraným
   v nastavení Bodíku.
 - Automatizace mohou používat služby `bodik.adjust_score` a `bodik.set_score`.
+- Nakonfigurované důvody se bezpečně používají službou `bodik.apply_reason` podle
+  stabilního ID; bodovou hodnotu a denní limity určuje backend.
 - Pro čtení jsou dostupné služby `bodik.get_info`, `bodik.read_scores` a
   `bodik.read_periodic`.
 - Periodický engine ukládá pouze nové způsobilé transakce a bezpečně dohání
   zmeškané uzávěry po startu Home Assistantu.
+- Volitelný denní limit důvodu i Offline bodový strop používají lokální den
+  Home Assistantu a jsou samostatné pro každý profil.
 - Veřejný JSON, anonymní webhook ani shell command nejsou součástí verze 9.
 
 ## Instalace

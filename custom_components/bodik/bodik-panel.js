@@ -351,18 +351,9 @@ class BodikPanel extends LitElement {
       <section class="card">
         <h2>Rychlé důvody</h2>
         ${!this._canManage ? html`<p class="note">Body mohou měnit pouze rodiče.</p>` : ""}
-        <div class="reasons">
-          ${this.reasons.length
-            ? this.reasons.map(
-                (reason) => html`
-                  <button class="reason" .reason=${reason} @click=${this._applyReason} ?disabled=${!this._canManage || this._saving}>
-                    <span class="name">${reason.name}</span>
-                    <span class="pts ${reason.value >= 0 ? "positive" : "negative"}">${reason.value >= 0 ? "+" : ""}${reason.value}</span>
-                  </button>
-                `,
-              )
-            : html`<p class="muted">Nejsou nastavené žádné rychlé důvody.</p>`}
-        </div>
+        ${this.reasons.length
+          ? this._renderReasonGroups()
+          : html`<p class="muted">Nejsou nastavené žádné rychlé důvody.</p>`}
       </section>
 
       ${this._renderRewardsSummary()}
@@ -399,6 +390,28 @@ class BodikPanel extends LitElement {
           : ""}
       </section>
     `;
+  }
+
+  _renderReasonGroups() {
+    const categories = ["school", "home", "behaviour", "offline", "digital", ""];
+    return html`<div class="reason-groups">
+      ${categories.map((category) => {
+        const reasons = this.reasons.filter((reason) => (reason.category || "") === category);
+        if (!reasons.length) return "";
+        return html`<section class="reason-group">
+          <h3>${this._reasonCategoryLabel(category)}</h3>
+          <div class="reasons">
+            ${reasons.map((reason) => {
+              const status = this.activeProfile.reason_status?.reasons?.[reason.id];
+              return html`<button class="reason" .reason=${reason} title=${status?.message || ""} @click=${this._applyReason} ?disabled=${!this._canManage || this._saving || status?.available === false}>
+                <span class="name">${reason.name}${status?.limit ? html`<small>${status.used_today}/${status.limit} dnes</small>` : ""}${status && !status.available ? html`<small class="negative">${status.message}</small>` : ""}</span>
+                <span class="pts ${reason.value >= 0 ? "positive" : "negative"}">${reason.value >= 0 ? "+" : ""}${reason.value}</span>
+              </button>`;
+            })}
+          </div>
+        </section>`;
+      })}
+    </div>`;
   }
 
   _progressWidth(points, target, cap = 100) {
@@ -702,28 +715,46 @@ class BodikPanel extends LitElement {
     return html`
       <section class="card">
         <h2>Důvody · ${this.activeProfile.name}</h2>
-        <div class="form-row">
+        <div class="offline-cap-row">
+          <label>Denní strop kladných Offline bodů<input id="offline-daily-cap" type="number" min="1" step="1" .value=${this.activeProfile.offline_daily_cap ?? ""} placeholder="Bez stropu" /></label>
+          <button class="btn ghost" @click=${this._saveOfflineCap} ?disabled=${this._saving}>Uložit Offline strop</button>
+          <span class="muted small">Dnes: ${this.activeProfile.reason_status?.offline_points_today || 0} / ${this.activeProfile.offline_daily_cap ?? "∞"} b.</span>
+        </div>
+        <div class="reason-form">
           <label class="grow">Název<input id="reason-name" maxlength="120" /></label>
           <label class="number-field">Body<input id="reason-points" type="number" step="1" /></label>
+          <label>Kategorie<select id="reason-category">${this._reasonCategoryOptions("")}</select></label>
+          <label>Max. použití za den<input id="reason-limit" type="number" min="1" step="1" placeholder="Bez limitu" /></label>
           <button class="btn align-end" @click=${this._addReason} ?disabled=${this._saving}>Přidat</button>
         </div>
         <div class="manage-grid">
           ${this.reasons.map((reason, index) =>
             this._editingReasonIndex === index
               ? html`
-                  <article class="manage-item editing">
+                  <article class="manage-item editing reason-edit">
                     <input class="edit-reason-name" maxlength="120" .value=${reason.name} aria-label="Název důvodu" />
                     <input class="edit-reason-value" type="number" step="1" .value=${reason.value} aria-label="Body" />
+                    <select class="edit-reason-category" aria-label="Kategorie">${this._reasonCategoryOptions(reason.category || "")}</select>
+                    <input class="edit-reason-limit" type="number" min="1" step="1" .value=${reason.max_occurrences_per_day ?? ""} placeholder="Bez denního limitu" aria-label="Maximální počet použití za den" />
                     <div class="item-actions"><button class="btn" @click=${() => this._saveReasonEdited(index)}>Uložit</button><button class="btn ghost" @click=${this._cancelEdit}>Zrušit</button></div>
                   </article>
                 `
               : html`
-                  <article class="manage-item"><span>${reason.name}</span><strong class=${reason.value >= 0 ? "positive" : "negative"}>${reason.value >= 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>
+                  <article class="manage-item"><span><strong>${reason.name}</strong><small>${this._reasonCategoryLabel(reason.category)} · ${reason.max_occurrences_per_day ? `max. ${reason.max_occurrences_per_day}× denně` : "bez denního limitu"}</small></span><strong class=${reason.value >= 0 ? "positive" : "negative"}>${reason.value >= 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>
                 `,
           )}
         </div>
       </section>
     `;
+  }
+
+  _reasonCategoryOptions(selected) {
+    const categories = [["", "Bez kategorie"], ["school", "Škola"], ["home", "Domov"], ["behaviour", "Chování"], ["offline", "Offline aktivity"], ["digital", "Digitální disciplína"]];
+    return categories.map(([value, label]) => html`<option value=${value} ?selected=${selected === value}>${label}</option>`);
+  }
+
+  _reasonCategoryLabel(value) {
+    return { school: "Škola", home: "Domov", behaviour: "Chování", offline: "Offline aktivity", digital: "Digitální disciplína" }[value] || "Bez kategorie";
   }
 
   _renderRewardSettings() {
@@ -800,9 +831,24 @@ class BodikPanel extends LitElement {
     this._adjustScore(Number(event.currentTarget.dataset.delta), "Manuální změna");
   }
 
-  _applyReason(event) {
+  async _applyReason(event) {
     const reason = event.currentTarget.reason;
-    this._adjustScore(reason.value, reason.name);
+    if (!this._canManage || this._saving || !this.activeProfile || !reason?.id) return;
+    this._saving = true;
+    try {
+      await this.hass.callWS({
+        type: "bodik/apply_reason",
+        profile_id: this.activeProfile.id,
+        reason_id: reason.id,
+      });
+      await this._loadAllData({ silent: true });
+      this._showToast(`${reason.name}: skóre ${this.score}`);
+    } catch (error) {
+      await this._loadAllData({ silent: true });
+      this._showToast(this._errorMessage(error, "Důvod nelze použít."), true, 7000);
+    } finally {
+      this._saving = false;
+    }
   }
 
   _applyCustomDelta() {
@@ -900,18 +946,28 @@ class BodikPanel extends LitElement {
   async _addReason() {
     const nameInput = this.shadowRoot.querySelector("#reason-name");
     const valueInput = this.shadowRoot.querySelector("#reason-points");
+    const limitInput = this.shadowRoot.querySelector("#reason-limit");
     const name = nameInput.value.trim();
     const value = Number(valueInput.value);
-    if (!name || !Number.isFinite(value)) {
+    const limit = limitInput.value.trim() ? Number(limitInput.value) : null;
+    if (!name || !Number.isFinite(value) || (limit !== null && (!Number.isInteger(limit) || limit < 1))) {
       this._showToast("Vyplňte název a počet bodů.", true);
       return;
     }
     const data = this._cloneData();
-    data.profiles.find((item) => item.id === this.activeProfileId).reasons.push({ name, value: Math.trunc(value) });
+    data.profiles.find((item) => item.id === this.activeProfileId).reasons.push({
+      id: crypto.randomUUID().replaceAll("-", ""),
+      name,
+      value: Math.trunc(value),
+      category: this.shadowRoot.querySelector("#reason-category").value,
+      max_occurrences_per_day: limit,
+    });
     this.appData = data;
     if (await this._saveConfig("Důvod byl přidán")) {
       nameInput.value = "";
       valueInput.value = "";
+      limitInput.value = "";
+      this.shadowRoot.querySelector("#reason-category").value = "";
     }
   }
 
@@ -919,12 +975,32 @@ class BodikPanel extends LitElement {
     const editor = this.shadowRoot.querySelector(".manage-item.editing");
     const name = editor.querySelector(".edit-reason-name").value.trim();
     const value = Number(editor.querySelector(".edit-reason-value").value);
-    if (!name || !Number.isFinite(value)) return this._showToast("Vyplňte název a počet bodů.", true);
+    const limitText = editor.querySelector(".edit-reason-limit").value.trim();
+    const limit = limitText ? Number(limitText) : null;
+    if (!name || !Number.isFinite(value) || (limit !== null && (!Number.isInteger(limit) || limit < 1))) return this._showToast("Vyplňte platný název, body a denní limit.", true);
     const data = this._cloneData();
-    data.profiles.find((item) => item.id === this.activeProfileId).reasons[index] = { name, value: Math.trunc(value) };
+    const reason = data.profiles.find((item) => item.id === this.activeProfileId).reasons[index];
+    Object.assign(reason, {
+      name,
+      value: Math.trunc(value),
+      category: editor.querySelector(".edit-reason-category").value,
+      max_occurrences_per_day: limit,
+    });
     this.appData = data;
     this._cancelEdit();
     await this._saveConfig("Důvod byl upraven");
+  }
+
+  async _saveOfflineCap() {
+    const input = this.shadowRoot.querySelector("#offline-daily-cap");
+    const value = input.value.trim() ? Number(input.value) : null;
+    if (value !== null && (!Number.isInteger(value) || value < 1)) {
+      return this._showToast("Offline strop musí být kladné celé číslo nebo prázdný.", true);
+    }
+    const data = this._cloneData();
+    data.profiles.find((item) => item.id === this.activeProfileId).offline_daily_cap = value;
+    this.appData = data;
+    await this._saveConfig("Offline denní strop byl uložen");
   }
 
   async _deleteReason(index) {
@@ -1036,6 +1112,7 @@ class BodikPanel extends LitElement {
       bodik_version: VERSION,
       exported_at: new Date().toISOString(),
       data: {
+        data_version: this.appData.data_version || 3,
         profiles: this.profiles,
         admin_user_ids: this.appData.admin_user_ids || [],
       },

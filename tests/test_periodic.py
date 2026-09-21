@@ -101,6 +101,25 @@ class PeriodicEngineTest(unittest.TestCase):
         autumn_next = periodic.next_daily_boundary(autumn, PRAGUE)
         self.assertEqual(25 * 3600, (autumn_next - autumn).total_seconds())
 
+    @unittest.skipUnless(HAS_PRAGUE_TZ, "IANA tzdata is not installed locally")
+    def test_weekly_friday_boundary_keeps_local_time_across_dst(self) -> None:
+        config = deepcopy(self.config)
+        config["weekly_tick_weekday"] = 4
+        config["weekly_tick_time"] = "17:00"
+        spring_start = periodic.weekly_period_start(
+            moment("2026-03-27T18:00:00+00:00"), config, PRAGUE
+        )
+        spring_end = periodic.next_weekly_boundary(spring_start, config, PRAGUE)
+        self.assertEqual((17, 0), (spring_end.astimezone(PRAGUE).hour, spring_end.astimezone(PRAGUE).minute))
+        self.assertEqual(167 * 3600, (spring_end - spring_start).total_seconds())
+
+        autumn_start = periodic.weekly_period_start(
+            moment("2026-10-23T18:00:00+00:00"), config, PRAGUE
+        )
+        autumn_end = periodic.next_weekly_boundary(autumn_start, config, PRAGUE)
+        self.assertEqual((17, 0), (autumn_end.astimezone(PRAGUE).hour, autumn_end.astimezone(PRAGUE).minute))
+        self.assertEqual(169 * 3600, (autumn_end - autumn_start).total_seconds())
+
     def test_daily_entitlement_formula_and_cap(self) -> None:
         expected = {29: 0, 30: 120, 34: 120, 35: 135, 50: 180, 100: 180}
         for points, minutes in expected.items():

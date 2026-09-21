@@ -15,6 +15,8 @@ repozitář obsahuje pouze zdrojový kód integrace.
 - více samostatných profilů;
 - přidávání, odebírání a přesné nastavení bodů;
 - konfigurovatelné důvody a odměny;
+- stabilní ID důvodů, volitelné denní limity a serverově řízené použití;
+- konfigurovatelný denní strop kladných Offline bodů;
 - samostatné denní, týdenní a měsíční cíle pro každý profil;
 - výpočet sdíleného digitálního času na následující den;
 - konfigurovatelná týdenní odměna a měsíční kapesné;
@@ -92,6 +94,7 @@ Vývojový postup:
 ## Dostupné služby
 
 - `bodik.adjust_score` – přičte nebo odečte body;
+- `bodik.apply_reason` – bezpečně použije nakonfigurovaný důvod podle jeho ID;
 - `bodik.set_score` – nastaví přesný počet bodů;
 - `bodik.get_info` – vrátí provozní informace;
 - `bodik.read_scores` – vrátí aktuální stav profilů.
@@ -115,6 +118,24 @@ nepoužije jako sankce. Výchozí dopady jsou záměrně neutrální (0 minut,
 vypnutá týdenní odměna a 0 Kč), dokud správce nenastaví rodinné hodnoty.
 `adjust_score` se do periodického výkonu započítá;
 administrativní `set_score`, reset a technická synchronizace nikoliv.
+
+Interní datové schéma v3 doplňuje stabilní ID, kategorii a volitelný denní
+limit důvodů. Staré důvody dostanou při normalizaci ID, aniž by se změnil jejich
+název, hodnota, historie nebo skóre. Rychlá tlačítka posílají backendu pouze ID;
+bodovou hodnotu, denní četnost a Offline strop vždy kontroluje backend podle
+lokálního dne Home Assistantu.
+
+Při jednorázové migraci existujících profilů Tomášek a Kuba/Kubík se použije
+dohodnutá rodinná konfigurace z issue #3: 30 bodů denně, 120–180 minut,
+180 bodů týdně s páteční uzávěrou v 17:00, 780 bodů měsíčně, 200 Kč při 100 %,
+strop 150 % a sada rodinných důvodů. Tyto hodnoty nejsou obecnými výchozími
+hodnotami nových instalací ani nových profilů a po migraci zůstávají pro každý
+profil samostatně editovatelné.
+
+Pravidla „30 vs. 60 minut venku“ a „běžný vs. kompletní úklid“ platí pro jednu
+konkrétní aktivitu, ale Bodík zatím neeviduje ID jednotlivých aktivit. Proto
+nejsou automatizována jako složitý rules engine; rodič pro danou aktivitu použije
+jen odpovídající důvod. Denní četnosti a celkový Offline strop backend vynucuje.
 
 Záloha formátu v2 obsahuje konfiguraci i celý nutný stav period. Import nadále
 přijímá v8 zálohy formátu v1 a zahájí pro ně nové periodické sledování bez

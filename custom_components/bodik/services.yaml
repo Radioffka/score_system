@@ -27,6 +27,25 @@ adjust_score:
       selector:
         text:
 
+apply_reason:
+  name: Použít nastavený důvod
+  description: Použije důvod podle stabilního ID; hodnotu bodů a denní limity určuje backend Bodíku.
+  fields:
+    profile:
+      name: Profil
+      description: ID profilu, jeho název nebo navázaná entita bodů.
+      required: true
+      example: "Tomášek"
+      selector:
+        text:
+    reason_id:
+      name: ID důvodu
+      description: Stabilní ID důvodu z konfigurace profilu.
+      required: true
+      example: "home_make_bed"
+      selector:
+        text:
+
 set_score:
   name: Nastavit body
   description: Nastaví profilu přesný počet bodů a zapíše změnu do historie.
