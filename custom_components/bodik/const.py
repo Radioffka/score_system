@@ -1,7 +1,7 @@
 """Constants for the Bodik integration."""
 
 DOMAIN = "bodik"
-VERSION = "8.0.6"
+VERSION = "8.1.0"
 
 STORAGE_KEY = DOMAIN
 STORAGE_VERSION = 1

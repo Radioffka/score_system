@@ -106,6 +106,36 @@ async def websocket_save_config(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "bodik/import_backup",
+        vol.Required("revision"): vol.Coerce(int),
+        vol.Required("backup"): dict,
+    }
+)
+@websocket_api.async_response
+async def websocket_import_backup(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Import a complete settings and history backup."""
+    manager: BodikManager = hass.data[DOMAIN]
+    user_id = await _require_manager_permission(connection, msg["id"], manager)
+    if user_id is None:
+        return
+    try:
+        result = await manager.async_import_backup(
+            msg["backup"], msg["revision"], user_id
+        )
+    except Exception as err:
+        _send_exception(connection, msg["id"], err)
+        return
+    connection.send_result(
+        msg["id"], {"data": result, "revision": result["revision"]}
+    )
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "bodik/adjust_score",
         vol.Required("profile_id"): PROFILE_FIELD,
         vol.Required("delta"): SCORE_FIELD,
@@ -198,6 +228,7 @@ def async_register_websocket_commands(
     del manager  # The live manager is resolved from hass.data by every handler.
     websocket_api.async_register_command(hass, websocket_get)
     websocket_api.async_register_command(hass, websocket_save_config)
+    websocket_api.async_register_command(hass, websocket_import_backup)
     websocket_api.async_register_command(hass, websocket_adjust_score)
     websocket_api.async_register_command(hass, websocket_set_score)
     websocket_api.async_register_command(hass, websocket_clear_history)

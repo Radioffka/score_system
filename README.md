@@ -16,6 +16,7 @@ repozitář obsahuje pouze zdrojový kód integrace.
 - přidávání, odebírání a přesné nastavení bodů;
 - konfigurovatelné důvody a odměny;
 - historie změn s exportem do XLSX;
+- kompletní záloha a obnova nastavení i historie ve formátu JSON;
 - oprávnění pro vybrané uživatele Home Assistantu;
 - služby pro automatizace a MCP;
 - responzivní světlý i tmavý vzhled;
@@ -55,6 +56,20 @@ Konfigurace karty:
 type: custom:bodik-panel
 compact: true
 ```
+
+Panel v postranní liště i karta `custom:bodik-panel` načítají tentýž lokálně
+nainstalovaný JavaScript a pracují se stejnými daty backendu. Kód se nespouští
+přímo z GitHubu: HACS stáhne konkrétní release do Home Assistantu.
+
+## Záloha a obnova dat
+
+Správce najde v záložce **Nastavení** sekci **Záloha a obnova**. Exportovaný
+JSON obsahuje všechny profily, aktuální skóre, pravidla, důvody, odměny,
+oprávnění a historii. Import obsah kompletně nahradí až po výslovném potvrzení
+a backend před uložením kontroluje jeho formát i oprávnění.
+
+Záloha neobsahuje samotné soubory profilových fotografií ani definice
+pomocníků `input_number`; ukládá pouze jejich odkazy a entity ID.
 
 ## Aktualizace
 

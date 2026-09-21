@@ -381,6 +381,58 @@ class BodikManager:
             ]
         return payload
 
+    def _sanitize_profile_collection(
+        self,
+        raw_profiles: Any,
+        existing_by_id: dict[str, dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Validate a complete profile collection and its unique fields."""
+        if not isinstance(raw_profiles, list) or not raw_profiles:
+            raise BodikValidationError("Bodík musí obsahovat alespoň jeden profil.")
+        if len(raw_profiles) > MAX_PROFILES:
+            raise BodikValidationError("Byl překročen maximální počet profilů.")
+
+        existing_by_id = existing_by_id or {}
+        seen_ids: set[str] = set()
+        seen_names: set[str] = set()
+        seen_entities: set[str] = set()
+        profiles: list[dict[str, Any]] = []
+
+        for raw_profile in raw_profiles:
+            if not isinstance(raw_profile, dict):
+                raise BodikValidationError("Neplatná konfigurace profilu.")
+            existing = existing_by_id.get(_text(raw_profile.get("id"), 64))
+            profile = self._sanitize_profile(raw_profile, existing, seen_ids)
+            normalized_name = profile["name"].casefold()
+            if normalized_name in seen_names:
+                raise BodikValidationError(
+                    f"Název profilu je použit vícekrát: {profile['name']}"
+                )
+            if profile["scoreEntity"] in seen_entities:
+                raise BodikValidationError(
+                    f"Entita bodů je přiřazena více profilům: {profile['scoreEntity']}"
+                )
+            seen_ids.add(profile["id"])
+            seen_names.add(normalized_name)
+            if profile["scoreEntity"]:
+                seen_entities.add(profile["scoreEntity"])
+            profiles.append(profile)
+
+        return profiles
+
+    async def _valid_manager_user_ids(self, raw_users: Any) -> list[str]:
+        """Return unique active HA user IDs from untrusted input."""
+        valid_users = {
+            user.id for user in await self.hass.auth.async_get_users() if user.is_active
+        }
+        result: list[str] = []
+        if isinstance(raw_users, list):
+            for item in raw_users:
+                user_id = _text(item, 64)
+                if user_id in valid_users and user_id not in result:
+                    result.append(user_id)
+        return result
+
     async def async_save_config(
         self, raw: dict[str, Any], expected_revision: int, user_id: str
     ) -> dict[str, Any]:
@@ -394,45 +446,13 @@ class BodikManager:
                     "Data byla mezitím změněna v jiném panelu. Obnovte stránku a akci zopakujte."
                 )
 
-            raw_profiles = raw.get("profiles", [])
-            if not isinstance(raw_profiles, list) or not raw_profiles:
-                raise BodikValidationError("Bodík musí obsahovat alespoň jeden profil.")
-            if len(raw_profiles) > MAX_PROFILES:
-                raise BodikValidationError("Byl překročen maximální počet profilů.")
-
             existing_by_id = {profile["id"]: profile for profile in self.data["profiles"]}
-            seen_ids: set[str] = set()
-            seen_names: set[str] = set()
-            seen_entities: set[str] = set()
-            profiles: list[dict[str, Any]] = []
-            for raw_profile in raw_profiles:
-                if not isinstance(raw_profile, dict):
-                    raise BodikValidationError("Neplatná konfigurace profilu.")
-                existing = existing_by_id.get(_text(raw_profile.get("id"), 64))
-                profile = self._sanitize_profile(raw_profile, existing, seen_ids)
-                normalized_name = profile["name"].casefold()
-                if normalized_name in seen_names:
-                    raise BodikValidationError(
-                        f"Název profilu je použit vícekrát: {profile['name']}"
-                    )
-                if profile["scoreEntity"] in seen_entities:
-                    raise BodikValidationError(
-                        f"Entita bodů je přiřazena více profilům: {profile['scoreEntity']}"
-                    )
-                seen_ids.add(profile["id"])
-                seen_names.add(normalized_name)
-                if profile["scoreEntity"]:
-                    seen_entities.add(profile["scoreEntity"])
-                profiles.append(profile)
-
-            valid_users = {user.id for user in await self.hass.auth.async_get_users() if user.is_active}
-            admin_user_ids = []
-            raw_admins = raw.get("admin_user_ids", [])
-            if isinstance(raw_admins, list):
-                for item in raw_admins:
-                    user_id_item = _text(item, 64)
-                    if user_id_item in valid_users and user_id_item not in admin_user_ids:
-                        admin_user_ids.append(user_id_item)
+            profiles = self._sanitize_profile_collection(
+                raw.get("profiles", []), existing_by_id
+            )
+            admin_user_ids = await self._valid_manager_user_ids(
+                raw.get("admin_user_ids", [])
+            )
 
             self.data = {
                 "revision": self.data["revision"] + 1,
@@ -445,6 +465,48 @@ class BodikManager:
         self._register_entity_listener()
         await self._async_sync_all_mirrors()
         self._fire_updated("config")
+        return deepcopy(self.data)
+
+    async def async_import_backup(
+        self, raw_backup: dict[str, Any], expected_revision: int, user_id: str
+    ) -> dict[str, Any]:
+        """Replace settings and ledgers from a validated Bodík JSON backup."""
+        if not await self.async_can_manage(user_id):
+            raise PermissionError("Uživatel nemá oprávnění spravovat Bodík.")
+
+        if raw_backup.get("format") == "bodik-backup":
+            if raw_backup.get("format_version") != 1:
+                raise BodikValidationError("Nepodporovaná verze zálohy Bodíku.")
+            raw_data = raw_backup.get("data")
+        elif "profiles" in raw_backup:
+            raw_data = raw_backup
+        else:
+            raw_data = None
+
+        if not isinstance(raw_data, dict):
+            raise BodikValidationError("Soubor neobsahuje platnou zálohu Bodíku.")
+
+        async with self._lock:
+            if expected_revision != self.data["revision"]:
+                raise BodikConflictError(
+                    "Data byla mezitím změněna v jiném panelu. Obnovte stránku a import zopakujte."
+                )
+
+            profiles = self._sanitize_profile_collection(raw_data.get("profiles", []))
+            admin_user_ids = await self._valid_manager_user_ids(
+                raw_data.get("admin_user_ids", [])
+            )
+            self.data = {
+                "revision": self.data["revision"] + 1,
+                "profiles": profiles,
+                "admin_user_ids": admin_user_ids,
+                "updated_at": _now_iso(),
+            }
+            await self.store.async_save(self.data)
+
+        self._register_entity_listener()
+        await self._async_sync_all_mirrors()
+        self._fire_updated("import")
         return deepcopy(self.data)
 
     async def async_adjust_score(

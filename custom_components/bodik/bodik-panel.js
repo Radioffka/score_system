@@ -1,7 +1,7 @@
-// Bodík v8.0.6 — authenticated WebSocket client for the Bodík integration.
+// Bodík v8.1.0 — authenticated WebSocket client for the Bodík integration.
 import { LitElement, html, css } from "/local/lit-element.js";
 
-const VERSION = "8.0.6";
+const VERSION = "8.1.0";
 
 class BodikPanel extends LitElement {
   static get properties() {
@@ -488,6 +488,30 @@ class BodikPanel extends LitElement {
       ${this._renderRewardSettings()}
 
       <section class="card">
+        <h2>Záloha a obnova</h2>
+        <p class="note">
+          Kompletní JSON záloha obsahuje profily, skóre, pravidla, důvody, odměny,
+          oprávnění a historii. Soubory fotografií ani definice pomocníků
+          <code>input_number</code> součástí zálohy nejsou.
+        </p>
+        <div class="backup-actions">
+          <button class="btn" @click=${this._downloadBackup} ?disabled=${this._saving || !this.profiles.length}>
+            Exportovat zálohu
+          </button>
+          <label class="btn ghost backup-file-button ${this._saving ? "disabled" : ""}">
+            Importovat zálohu
+            <input
+              type="file"
+              accept=".json,application/json"
+              @change=${this._importBackup}
+              ?disabled=${this._saving}
+            />
+          </label>
+        </div>
+        <p class="note small">Import nahradí všechna současná nastavení, skóre a historii obsahem vybrané zálohy.</p>
+      </section>
+
+      <section class="card">
         <h2>Diagnostika</h2>
         <div class="diagnostics">
           <div><span>Backend</span><strong>Připojen</strong></div>
@@ -855,6 +879,76 @@ class BodikPanel extends LitElement {
     window.XLSX.utils.book_append_sheet(workbook, sheet, "Historie Bodů");
     const safeName = this.activeProfile.name.replace(/[\\/:*?"<>|]/g, "_");
     window.XLSX.writeFile(workbook, `bodik_${safeName}_historie.xlsx`);
+  }
+
+  _downloadBackup() {
+    if (!this._canManage || !this.profiles.length) return;
+    const backup = {
+      format: "bodik-backup",
+      format_version: 1,
+      bodik_version: VERSION,
+      exported_at: new Date().toISOString(),
+      data: {
+        profiles: this.profiles,
+        admin_user_ids: this.appData.admin_user_ids || [],
+      },
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    link.href = url;
+    link.download = `bodik_zaloha_${timestamp}.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    this._showToast("Záloha Bodíku byla exportována");
+  }
+
+  async _importBackup(event) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file || !this._canManage || this._saving) return;
+
+    try {
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error("Soubor zálohy je příliš velký (maximum je 5 MB).");
+      }
+      const backup = JSON.parse(await file.text());
+      const data = backup?.format === "bodik-backup" ? backup.data : backup;
+      if (!data || !Array.isArray(data.profiles) || !data.profiles.length) {
+        throw new Error("Soubor neobsahuje platnou zálohu Bodíku.");
+      }
+      const historyCount = data.profiles.reduce(
+        (total, profile) => total + (Array.isArray(profile?.history) ? profile.history.length : 0),
+        0,
+      );
+      if (!confirm(
+        `Import nahradí současná data ${data.profiles.length} profily a ${historyCount} záznamy historie. Pokračovat?`,
+      )) return;
+
+      this._saving = true;
+      const response = await this.hass.callWS({
+        type: "bodik/import_backup",
+        revision: this._revision,
+        backup,
+      });
+      this._revision = response.revision;
+      this.activeProfileId = null;
+      await this._loadAllData({ silent: true });
+      this._historyLimit = 10;
+      this._showToast(`Záloha byla obnovena: ${this.profiles.length} profilů`);
+    } catch (error) {
+      const message = this._errorMessage(error, "Import zálohy se nezdařil.");
+      if (error?.code === "conflict" || message.toLowerCase().includes("mezitím")) {
+        await this._loadAllData({ silent: true });
+      }
+      this._showToast(message, true, 7000);
+    } finally {
+      this._saving = false;
+      input.value = "";
+    }
   }
 
   _fmt(timestamp) {

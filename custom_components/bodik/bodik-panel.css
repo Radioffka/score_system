@@ -685,6 +685,40 @@ textarea::placeholder {
   overflow-wrap: anywhere;
 }
 
+.backup-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0 8px;
+}
+
+.backup-file-button {
+  position: relative;
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--bodik-text);
+}
+
+.backup-file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.backup-file-button.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 #toast-notifications {
   position: fixed;
   right: 20px;
@@ -869,6 +903,10 @@ footer {
 
   .item-actions .btn {
     flex: 1 1 auto;
+  }
+
+  .backup-actions .btn {
+    width: 100%;
   }
 }
 
