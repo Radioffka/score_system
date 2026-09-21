@@ -1,7 +1,7 @@
-# Bodík v9
+# Bodík v9.1
 
 Bodík je lokální rodinný bodovací systém integrovaný přímo do Home Assistantu.
-Obsahuje profily dětí, důvody bodových změn, odměny a historii.
+Obsahuje profily dětí, důvody bodových změn, periodické nároky a historii.
 
 ## Architektura
 
@@ -18,6 +18,10 @@ Obsahuje profily dětí, důvody bodových změn, odměny a historii.
   zmeškané uzávěry po startu Home Assistantu.
 - Volitelný denní limit důvodu i Offline bodový strop používají lokální den
   Home Assistantu a jsou samostatné pro každý profil.
+- Kategorie důvodů mají stabilní profilová ID; zobrazované názvy a pořadí lze
+  měnit bez dopadu na backendové limity.
+- Staré prahové odměny z v8 jsou archivované jako inertní migrační data a
+  neovlivňují aktivní periodické nároky.
 - Veřejný JSON, anonymní webhook ani shell command nejsou součástí verze 9.
 
 ## Instalace
@@ -32,7 +36,7 @@ panel_custom:
     url_path: bodik
     sidebar_title: Bodík
     sidebar_icon: mdi:trophy
-    module_url: /bodik-panel/bodik-panel.js?v=9.0.0
+    module_url: /bodik-panel/bodik-panel.js?v=9.1.0
     config: {}
 ```
 

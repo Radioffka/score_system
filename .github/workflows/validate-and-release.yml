@@ -20,8 +20,22 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Check Python syntax
+        run: python -m compileall -q custom_components tests
+      - name: Check JavaScript syntax
+        run: |
+          node --check custom_components/bodik/bodik-panel.js
+          node --check custom_components/bodik/bodik-ui-utils.mjs
+      - name: Run frontend tests
+        run: node --test tests/test_frontend.mjs
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+      - name: Check whitespace
+        run: git diff --check
 
   validate-hacs:
     name: HACS validation

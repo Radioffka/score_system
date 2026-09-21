@@ -1,4 +1,4 @@
-"""Bodík v9: authenticated ledger with periodic goals and rewards."""
+"""Bodík v9: authenticated ledger with periodic goals and entitlements."""
 
 from __future__ import annotations
 
@@ -47,6 +47,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             StaticPathConfig(
                 "/bodik-panel/bodik-panel.css",
                 f"{component_path}/bodik-panel.css",
+                False,
+            ),
+            StaticPathConfig(
+                "/bodik-panel/bodik-ui-utils.mjs",
+                f"{component_path}/bodik-ui-utils.mjs",
                 False,
             ),
         ]

@@ -1,7 +1,8 @@
-// Bodík v9.0.0 — authenticated WebSocket client for the Bodík integration.
+// Bodík v9.1.0 — authenticated WebSocket client for the Bodík integration.
 import { LitElement, html, css } from "/local/lit-element.js";
+import { defaultReasonCategories, entitlementView, filterReasonGroups, orderedCategories } from "./bodik-ui-utils.mjs";
 
-const VERSION = "9.0.0";
+const VERSION = "9.1.0";
 
 class BodikPanel extends LitElement {
   static get properties() {
@@ -13,13 +14,14 @@ class BodikPanel extends LitElement {
       activeTab: { type: String, state: true },
       _availableUsers: { type: Array, state: true },
       _canManage: { type: Boolean, state: true },
+      _celebratingDaily: { type: Boolean, state: true },
       _editingReasonIndex: { type: Number, state: true },
-      _editingRewardId: { type: String, state: true },
       _error: { type: String, state: true },
       _haEntities: { type: Array, state: true },
       _historyLimit: { type: Number, state: true },
       _loading: { type: Boolean, state: true },
       _revision: { type: Number, state: true },
+      _reasonSearch: { type: String, state: true },
       _saving: { type: Boolean, state: true },
     };
   }
@@ -40,13 +42,14 @@ class BodikPanel extends LitElement {
     this.activeTab = "dashboard";
     this._availableUsers = [];
     this._canManage = false;
+    this._celebratingDaily = false;
     this._editingReasonIndex = -1;
-    this._editingRewardId = null;
     this._error = "";
     this._haEntities = [];
     this._historyLimit = 10;
     this._loading = true;
     this._revision = 0;
+    this._reasonSearch = "";
     this._saving = false;
     this._dataLoaded = false;
     this._unsubscribeUpdates = null;
@@ -78,10 +81,6 @@ class BodikPanel extends LitElement {
     return this.activeProfile?.reasons || [];
   }
 
-  get rewards() {
-    return this.activeProfile?.rewards || [];
-  }
-
   get history() {
     return this.activeProfile?.history || [];
   }
@@ -97,6 +96,7 @@ class BodikPanel extends LitElement {
   disconnectedCallback() {
     document.removeEventListener("visibilitychange", this._boundVisibilityChange);
     if (this._refreshInterval) window.clearInterval(this._refreshInterval);
+    if (this._celebrationTimer) window.clearTimeout(this._celebrationTimer);
     if (this._unsubscribeUpdates) {
       this._unsubscribeUpdates();
       this._unsubscribeUpdates = null;
@@ -159,6 +159,10 @@ class BodikPanel extends LitElement {
     try {
       const response = await this.hass.callWS({ type: "bodik/get" });
       const previousActive = this.activeProfileId;
+      const previousProfile = this.activeProfile;
+      const wasDailyComplete = previousProfile?.periodic_status?.daily
+        ? previousProfile.periodic_status.daily.points >= previousProfile.periodic_status.daily.target
+        : null;
       this.appData = response.data || { profiles: [], admin_user_ids: [] };
       this._revision = response.revision || this.appData.revision || 0;
       this._canManage = response.can_manage === true;
@@ -166,6 +170,11 @@ class BodikPanel extends LitElement {
       this.activeProfileId = this.profiles.some((item) => item.id === previousActive)
         ? previousActive
         : this.profiles[0]?.id || null;
+      const currentDaily = this.activeProfile?.periodic_status?.daily;
+      const isDailyComplete = currentDaily
+        ? currentDaily.points >= currentDaily.target
+        : false;
+      if (wasDailyComplete === false && isDailyComplete) this._startDailyCelebration();
       if (!this._canManage && this.activeTab === "settings") this.activeTab = "dashboard";
       this._error = "";
     } catch (error) {
@@ -174,6 +183,15 @@ class BodikPanel extends LitElement {
     } finally {
       this._loading = false;
     }
+  }
+
+  _startDailyCelebration() {
+    this._celebratingDaily = true;
+    if (this._celebrationTimer) window.clearTimeout(this._celebrationTimer);
+    this._celebrationTimer = window.setTimeout(() => {
+      this._celebratingDaily = false;
+      this._celebrationTimer = null;
+    }, 1300);
   }
 
   _errorMessage(error, fallback) {
@@ -322,7 +340,6 @@ class BodikPanel extends LitElement {
   }
 
   _renderDashboard() {
-    const goals = this._computeGoals();
     const visibleHistory = [...this.history].reverse().slice(0, this._historyLimit);
     return html`
       <section class="card focus">
@@ -330,33 +347,33 @@ class BodikPanel extends LitElement {
           <div class="label">Body · ${this.activeProfile.name}</div>
           <div class="score">${this.score}</div>
         </div>
-        <div class="focus-block">
-          <div class="label">Odemčeno</div>
-          <div>${goals.unlockedText}</div>
-        </div>
-        <div class="focus-block">
-          <div class="label">Další cíl</div>
-          <div class="next">${goals.nextGoalText}</div>
-        </div>
+        <div class="focus-block score-context"><div class="label">Dlouhodobé skóre</div><div>Slouží pro historii a návaznost. Aktuální nároky určuje periodický systém.</div></div>
       </section>
 
+      ${this._renderEntitlements()}
       ${this._renderPeriodicDashboard()}
 
-      ${this.activeProfile.rules
-        ? html`<section class="card"><h2>Pravidla</h2><div class="rules-text">${this.activeProfile.rules}</div></section>`
-        : ""}
+      <section class="card rules-card">
+        <h2>Aktuální pravidla</h2>
+        <div class="rules-text generated-rules">${this.activeProfile.generated_rules || "Pravidla nejsou dostupná."}</div>
+        ${this.activeProfile.rules
+          ? html`<h3>Další rodinná pravidla</h3><div class="rules-text">${this.activeProfile.rules}</div>`
+          : ""}
+      </section>
 
       ${this._canManage ? this._renderQuickActions() : ""}
 
       <section class="card">
         <h2>Rychlé důvody</h2>
         ${!this._canManage ? html`<p class="note">Body mohou měnit pouze rodiče.</p>` : ""}
+        <label class="reason-search">
+          <span class="sr-only">Hledat důvod</span>
+          <input type="search" placeholder="Hledat důvod…" .value=${this._reasonSearch} @input=${this._updateReasonSearch} @keydown=${this._reasonSearchKeydown} />
+        </label>
         ${this.reasons.length
           ? this._renderReasonGroups()
           : html`<p class="muted">Nejsou nastavené žádné rychlé důvody.</p>`}
       </section>
-
-      ${this._renderRewardsSummary()}
 
       <section class="card">
         <div class="section-head">
@@ -393,13 +410,15 @@ class BodikPanel extends LitElement {
   }
 
   _renderReasonGroups() {
-    const categories = ["school", "home", "behaviour", "offline", "digital", ""];
+    const groups = filterReasonGroups(
+      this.reasons,
+      this.activeProfile.reason_categories || [],
+      this._reasonSearch,
+    );
+    if (!groups.length) return html`<p class="muted empty-reasons">Žádný důvod neodpovídá hledání.</p>`;
     return html`<div class="reason-groups">
-      ${categories.map((category) => {
-        const reasons = this.reasons.filter((reason) => (reason.category || "") === category);
-        if (!reasons.length) return "";
-        return html`<section class="reason-group">
-          <h3>${this._reasonCategoryLabel(category)}</h3>
+      ${groups.map(({ category, reasons }) => html`<section class="reason-group">
+          <h3>${category.name}</h3>
           <div class="reasons">
             ${reasons.map((reason) => {
               const status = this.activeProfile.reason_status?.reasons?.[reason.id];
@@ -409,9 +428,19 @@ class BodikPanel extends LitElement {
               </button>`;
             })}
           </div>
-        </section>`;
-      })}
+        </section>`)}
     </div>`;
+  }
+
+  _updateReasonSearch(event) {
+    this._reasonSearch = event.currentTarget.value;
+  }
+
+  _reasonSearchKeydown(event) {
+    if (event.key === "Escape") {
+      event.currentTarget.value = "";
+      this._reasonSearch = "";
+    }
   }
 
   _progressWidth(points, target, cap = 100) {
@@ -426,20 +455,15 @@ class BodikPanel extends LitElement {
     const daily = status.daily;
     const weekly = status.weekly;
     const monthly = status.monthly;
-    const reward = weekly.active_reward;
     const monthlyCap = Number(config.max_payout_percent || 150);
     return html`
       <section class="card periodic-card">
         <div class="section-head">
-          <div><h2>Periodické cíle</h2><span class="muted small">Výkon se počítá odděleně od dlouhodobého skóre</span></div>
+          <div><h2>Průběžný výkon</h2><span class="muted small">Výkon se počítá odděleně od dlouhodobého skóre</span></div>
         </div>
-        <article class="periodic-goal daily-goal">
-          <div class="periodic-heading"><div><span class="periodic-kicker">Dnes</span><strong>${daily.points} / ${daily.target} bodů</strong></div><span>${daily.remaining ? `Zbývá ${daily.remaining} b.` : "Cíl splněn"}</span></div>
+        <article class="periodic-goal daily-goal ${daily.remaining ? "" : "completed"} ${this._celebratingDaily ? "celebrating" : ""}">
+          <div class="periodic-heading"><div><span class="periodic-kicker">Dnes</span><strong>${daily.points} / ${daily.target} bodů</strong></div><span>${daily.remaining ? `Zbývá ${daily.remaining} b.` : "✓ Denní cíl splněn"}</span></div>
           <div class="progress"><span style=${`width:${this._progressWidth(daily.points, daily.target)}%`}></span></div>
-          <div class="periodic-details">
-            <span><strong>${daily.today_entitlement} / ${config.max_digital_minutes} min</strong> dostupných dnes</span>
-            <span>Pokud den skončí nyní: <strong>${daily.tomorrow_entitlement_preview} min zítra</strong></span>
-          </div>
         </article>
         <div class="periodic-secondary">
           <article class="periodic-goal">
@@ -449,15 +473,51 @@ class BodikPanel extends LitElement {
               ${weekly.previous_result
                 ? html`<span>Minulý uzavřený týden: <strong>${weekly.previous_result.points} / ${weekly.previous_result.target}</strong>${weekly.previous_result.initial_partial ? " · úvodní částečné období" : ""}</span>`
                 : html`<span class="muted">První týden ještě nebyl uzavřen.</span>`}
-              ${reward?.enabled
-                ? html`<span class=${reward.unlocked ? "positive" : "muted"}><strong>${reward.label}</strong> · ${reward.unlocked ? "odemčeno" : "neodemčeno"}${reward.description ? html`<small>${reward.description}</small>` : ""}</span>`
-                : html`<span class="muted">Týdenní odměna není zapnutá.</span>`}
             </div>
           </article>
           <article class="periodic-goal">
             <div class="periodic-heading"><div><span class="periodic-kicker">Tento měsíc</span><strong>${monthly.points} / ${monthly.target} · ${monthly.estimated_allowance.completion_percent}%</strong></div></div>
             <div class="progress monthly"><span style=${`width:${this._progressWidth(monthly.points, monthly.target, monthlyCap) / monthlyCap * 100}%`}></span></div>
             <div class="periodic-details single"><span>Odhad kapesného: <strong>${monthly.estimated_allowance.amount} Kč</strong> (${monthly.estimated_allowance.payout_percent} %)</span></div>
+          </article>
+        </div>
+      </section>
+    `;
+  }
+
+  _renderEntitlements() {
+    const status = this.activeProfile?.periodic_status;
+    const config = this.activeProfile?.periodic_config;
+    if (!status || !config) return "";
+    const entitlement = entitlementView(status, config);
+    const weeklyReward = entitlement.weeklyReward;
+    const weeklyConfigured = config.weekly_reward?.enabled === true;
+    return html`
+      <section class="card entitlement-card">
+        <div class="section-head"><div><h2>Aktuálně odemčeno</h2><span class="muted small">Nároky z periodického systému</span></div></div>
+        <div class="entitlement-grid">
+          <article class="entitlement-item active">
+            <span class="periodic-kicker">Dnes odemčeno</span>
+            <strong>${entitlement.todayMinutes} min digitálního času</strong>
+            <small>Platí dnes podle předchozího uzavřeného dne.</small>
+          </article>
+          <article class="entitlement-item ${entitlement.tomorrowUnlocked ? "earned" : "pending"}">
+            <span class="periodic-kicker">${entitlement.tomorrowUnlocked ? "Na zítřek odemčeno" : "Na zítřek zatím neodemčeno"}</span>
+            ${entitlement.tomorrowUnlocked
+              ? html`<strong>${entitlement.tomorrowMinutes} min</strong>${entitlement.canGrowTomorrow ? html`<small>Další +${config.bonus_step_minutes} min za ${entitlement.pointsToNextBonus} bodů.</small>` : html`<small>Dosaženo denní maximum.</small>`}`
+              : html`<strong>Chybí ${entitlement.missingPoints} bodů</strong><small>Počítá se dnešní průběžný výkon.</small>`}
+          </article>
+          ${weeklyConfigured
+            ? html`<article class="entitlement-item ${weeklyReward?.unlocked ? "earned" : "pending"}">
+                <span class="periodic-kicker">Týdenní odměna</span>
+                <strong>${weeklyReward?.unlocked ? "✓ Odemčeno" : "Zatím neodemčeno"}</strong>
+                <small>${weeklyReward?.label || config.weekly_reward.label}${weeklyReward?.description || config.weekly_reward.description ? ` · ${weeklyReward?.description || config.weekly_reward.description}` : ""}</small>
+              </article>`
+            : ""}
+          <article class="entitlement-item estimate">
+            <span class="periodic-kicker">Odhad kapesného</span>
+            <strong>${entitlement.monthlyEstimate.amount} Kč</strong>
+            <small>Průběžný odhad za aktuální měsíc.${entitlement.previousMonthlyResult ? ` Poslední uzávěra: ${entitlement.previousMonthlyResult.amount} Kč.` : ""}</small>
           </article>
         </div>
       </section>
@@ -492,30 +552,6 @@ class BodikPanel extends LitElement {
     `;
   }
 
-  _renderRewardsSummary() {
-    const sorted = [...this.rewards].sort((a, b) => a.threshold - b.threshold);
-    return html`
-      <section class="card">
-        <h2>Odměny</h2>
-        <div class="rewards-summary-grid">
-          ${sorted.length
-            ? sorted.map((reward) => {
-                const unlocked = this.score >= reward.threshold;
-                return html`
-                  <article class="reward-summary-item ${unlocked ? "unlocked" : "locked"}">
-                    <div class="pts">${reward.threshold} b.</div>
-                    <div class="name">${reward.category}</div>
-                    ${this._formatRewardLevel(reward) ? html`<div class="level">${this._formatRewardLevel(reward)}</div>` : ""}
-                    <span class="sr-only">${unlocked ? "Odemčeno" : "Zamčeno"}</span>
-                  </article>
-                `;
-              })
-            : html`<p class="muted">Nejsou nastavené žádné odměny.</p>`}
-        </div>
-      </section>
-    `;
-  }
-
   _renderSettings() {
     return html`
       <section class="card">
@@ -543,20 +579,20 @@ class BodikPanel extends LitElement {
       </section>
 
       <section class="card">
-        <h2>Pravidla · ${this.activeProfile.name}</h2>
-        <label for="rules-input">Text pravidel</label>
+        <h2>Další rodinná pravidla · ${this.activeProfile.name}</h2>
+        <p class="note">Volitelné poznámky doplňují automaticky generovaná aktuální pravidla.</p>
+        <label for="rules-input">Text dalších pravidel</label>
         <textarea id="rules-input" class="rules-editor" maxlength="5000" .value=${this.activeProfile.rules || ""}></textarea>
         <button class="btn" @click=${this._saveRules} ?disabled=${this._saving}>Uložit pravidla</button>
       </section>
 
       ${this._renderReasonSettings()}
       ${this._renderPeriodicSettings()}
-      ${this._renderRewardSettings()}
 
       <section class="card">
         <h2>Záloha a obnova</h2>
         <p class="note">
-          Kompletní JSON záloha obsahuje profily, skóre, pravidla, důvody, odměny,
+          Kompletní JSON záloha obsahuje profily, skóre, pravidla, důvody, kategorie,
           oprávnění a historii. Soubory fotografií ani definice pomocníků
           <code>input_number</code> součástí zálohy nejsou.
         </p>
@@ -712,6 +748,17 @@ class BodikPanel extends LitElement {
   }
 
   _renderReasonSettings() {
+    const categories = orderedCategories(this.activeProfile.reason_categories || []);
+    const groups = [
+      ...categories.map((category) => ({
+        category,
+        reasons: this.reasons.map((reason, index) => ({ reason, index })).filter(({ reason }) => reason.category === category.id),
+      })),
+      {
+        category: { id: "", name: "Bez kategorie", order: Number.MAX_SAFE_INTEGER },
+        reasons: this.reasons.map((reason, index) => ({ reason, index })).filter(({ reason }) => !reason.category),
+      },
+    ];
     return html`
       <section class="card">
         <h2>Důvody · ${this.activeProfile.name}</h2>
@@ -720,6 +767,25 @@ class BodikPanel extends LitElement {
           <button class="btn ghost" @click=${this._saveOfflineCap} ?disabled=${this._saving}>Uložit Offline strop</button>
           <span class="muted small">Dnes: ${this.activeProfile.reason_status?.offline_points_today || 0} / ${this.activeProfile.offline_daily_cap ?? "∞"} b.</span>
         </div>
+
+        <div class="category-manager">
+          <div class="section-head"><div><h3>Kategorie</h3><span class="muted small">ID kategorie zůstává stabilní; mění se jen název a pořadí.</span></div></div>
+          <div class="category-list">
+            ${categories.map((category) => html`
+              <div class="category-row" data-category-id=${category.id}>
+                <code>${category.id}</code>
+                <label>Název<input class="category-name" maxlength="80" .value=${category.name} /></label>
+                <label>Pořadí<input class="category-order" type="number" step="1" .value=${category.order} /></label>
+                <button class="btn danger small-btn" @click=${() => this._deleteCategory(category.id)} ?disabled=${this._saving || category.id === "offline"} title=${category.id === "offline" ? "Offline je chráněná sémantická kategorie" : ""}>Smazat</button>
+              </div>`)}
+          </div>
+          <div class="category-add">
+            <label>Nová kategorie<input id="category-name-new" maxlength="80" placeholder="Název kategorie" /></label>
+            <button class="btn ghost align-end" @click=${this._addCategory} ?disabled=${this._saving}>Přidat kategorii</button>
+            <button class="btn align-end" @click=${this._saveCategories} ?disabled=${this._saving}>Uložit názvy a pořadí</button>
+          </div>
+        </div>
+
         <div class="reason-form">
           <label class="grow">Název<input id="reason-name" maxlength="120" /></label>
           <label class="number-field">Body<input id="reason-points" type="number" step="1" /></label>
@@ -727,69 +793,39 @@ class BodikPanel extends LitElement {
           <label>Max. použití za den<input id="reason-limit" type="number" min="1" step="1" placeholder="Bez limitu" /></label>
           <button class="btn align-end" @click=${this._addReason} ?disabled=${this._saving}>Přidat</button>
         </div>
-        <div class="manage-grid">
-          ${this.reasons.map((reason, index) =>
-            this._editingReasonIndex === index
-              ? html`
-                  <article class="manage-item editing reason-edit">
-                    <input class="edit-reason-name" maxlength="120" .value=${reason.name} aria-label="Název důvodu" />
-                    <input class="edit-reason-value" type="number" step="1" .value=${reason.value} aria-label="Body" />
-                    <select class="edit-reason-category" aria-label="Kategorie">${this._reasonCategoryOptions(reason.category || "")}</select>
-                    <input class="edit-reason-limit" type="number" min="1" step="1" .value=${reason.max_occurrences_per_day ?? ""} placeholder="Bez denního limitu" aria-label="Maximální počet použití za den" />
-                    <div class="item-actions"><button class="btn" @click=${() => this._saveReasonEdited(index)}>Uložit</button><button class="btn ghost" @click=${this._cancelEdit}>Zrušit</button></div>
-                  </article>
-                `
-              : html`
-                  <article class="manage-item"><span><strong>${reason.name}</strong><small>${this._reasonCategoryLabel(reason.category)} · ${reason.max_occurrences_per_day ? `max. ${reason.max_occurrences_per_day}× denně` : "bez denního limitu"}</small></span><strong class=${reason.value >= 0 ? "positive" : "negative"}>${reason.value >= 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>
-                `,
-          )}
+        <div class="reason-settings-groups">
+          ${groups.map(({ category, reasons }) => html`
+            <details class="reason-settings-group" ?open=${reasons.length > 0}>
+              <summary><span>${category.name}</span><span class="badge">${reasons.length}</span></summary>
+              <div class="category-reason-actions"><button class="btn ghost small-btn" @click=${() => this._prepareReasonForCategory(category.id)}>Přidat důvod</button></div>
+              <div class="manage-grid">
+                ${reasons.length ? reasons.map(({ reason, index }) => this._renderReasonEditor(reason, index)) : html`<p class="muted">Kategorie zatím nemá žádné důvody.</p>`}
+              </div>
+            </details>`)}
         </div>
       </section>
     `;
+  }
+
+  _renderReasonEditor(reason, index) {
+    return this._editingReasonIndex === index
+      ? html`<article class="manage-item editing reason-edit">
+          <input class="edit-reason-name" maxlength="120" .value=${reason.name} aria-label="Název důvodu" />
+          <input class="edit-reason-value" type="number" step="1" .value=${reason.value} aria-label="Body" />
+          <select class="edit-reason-category" aria-label="Kategorie">${this._reasonCategoryOptions(reason.category || "")}</select>
+          <input class="edit-reason-limit" type="number" min="1" step="1" .value=${reason.max_occurrences_per_day ?? ""} placeholder="Bez denního limitu" aria-label="Maximální počet použití za den" />
+          <div class="item-actions"><button class="btn" @click=${() => this._saveReasonEdited(index)}>Uložit</button><button class="btn ghost" @click=${this._cancelEdit}>Zrušit</button></div>
+        </article>`
+      : html`<article class="manage-item"><span><strong>${reason.name}</strong><small>${this._reasonCategoryLabel(reason.category)} · ${reason.max_occurrences_per_day ? `max. ${reason.max_occurrences_per_day}× denně` : "bez denního limitu"}</small></span><strong class=${reason.value >= 0 ? "positive" : "negative"}>${reason.value >= 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>`;
   }
 
   _reasonCategoryOptions(selected) {
-    const categories = [["", "Bez kategorie"], ["school", "Škola"], ["home", "Domov"], ["behaviour", "Chování"], ["offline", "Offline aktivity"], ["digital", "Digitální disciplína"]];
-    return categories.map(([value, label]) => html`<option value=${value} ?selected=${selected === value}>${label}</option>`);
+    const categories = [{ id: "", name: "Bez kategorie" }, ...orderedCategories(this.activeProfile?.reason_categories || [])];
+    return categories.map((category) => html`<option value=${category.id} ?selected=${selected === category.id}>${category.name}</option>`);
   }
 
   _reasonCategoryLabel(value) {
-    return { school: "Škola", home: "Domov", behaviour: "Chování", offline: "Offline aktivity", digital: "Digitální disciplína" }[value] || "Bez kategorie";
-  }
-
-  _renderRewardSettings() {
-    const sorted = [...this.rewards].sort((a, b) => a.threshold - b.threshold);
-    return html`
-      <section class="card">
-        <h2>Odměny · ${this.activeProfile.name}</h2>
-        <div class="reward-form">
-          <label>Kategorie<input id="reward-category" maxlength="120" placeholder="Např. iPad" /></label>
-          <label>Počet<input id="reward-value" type="number" step="1" /></label>
-          <label>Jednotka<input id="reward-unit" maxlength="60" placeholder="hodiny" /></label>
-          <label>Období<input id="reward-period" maxlength="60" placeholder="týdně" /></label>
-          <label>Potřebné body<input id="reward-threshold" type="number" step="1" /></label>
-          <button class="btn align-end" @click=${this._addReward} ?disabled=${this._saving}>Přidat</button>
-        </div>
-        <div class="manage-grid">
-          ${sorted.map((reward) =>
-            this._editingRewardId === reward.id
-              ? html`
-                  <article class="manage-item editing reward-edit" data-reward-id=${reward.id}>
-                    <input class="edit-reward-category" maxlength="120" .value=${reward.category} aria-label="Kategorie" />
-                    <input class="edit-reward-value" type="number" .value=${reward.value ?? ""} aria-label="Počet" />
-                    <input class="edit-reward-unit" maxlength="60" .value=${reward.unit ?? ""} aria-label="Jednotka" />
-                    <input class="edit-reward-period" maxlength="60" .value=${reward.period ?? ""} aria-label="Období" />
-                    <input class="edit-reward-threshold" type="number" .value=${reward.threshold} aria-label="Potřebné body" />
-                    <div class="item-actions"><button class="btn" @click=${() => this._saveRewardEdited(reward.id)}>Uložit</button><button class="btn ghost" @click=${this._cancelEdit}>Zrušit</button></div>
-                  </article>
-                `
-              : html`
-                  <article class="manage-item"><span><strong>${reward.category}</strong>${this._formatRewardLevel(reward) ? html`<small>${this._formatRewardLevel(reward)}</small>` : ""}</span><strong>${reward.threshold} b.</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingRewardId = reward.id)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReward(reward.id)}>Smazat</button></div></article>
-                `,
-          )}
-        </div>
-      </section>
-    `;
+    return this.activeProfile?.reason_categories?.find((category) => category.id === value)?.name || "Bez kategorie";
   }
 
   _switchProfile(event) {
@@ -901,7 +937,7 @@ class BodikPanel extends LitElement {
 
   async _addProfile() {
     const data = this._cloneData();
-    const profile = { id: crypto.randomUUID().replaceAll("-", ""), name: "Nový profil", scoreEntity: "", childPhotoUrl: "", theme: "auto", reasons: [], rewards: [], history: [], rules: "", score: 0 };
+    const profile = { id: crypto.randomUUID().replaceAll("-", ""), name: "Nový profil", scoreEntity: "", childPhotoUrl: "", theme: "auto", reasons: [], reason_categories: defaultReasonCategories(), history: [], rules: "", score: 0 };
     data.profiles.push(profile);
     this.appData = data;
     this.activeProfileId = profile.id;
@@ -940,7 +976,62 @@ class BodikPanel extends LitElement {
     const profile = data.profiles.find((item) => item.id === this.activeProfileId);
     profile.rules = this.shadowRoot.querySelector("#rules-input").value;
     this.appData = data;
-    await this._saveConfig("Pravidla byla uložena");
+    await this._saveConfig("Další rodinná pravidla byla uložena");
+  }
+
+  _prepareReasonForCategory(categoryId) {
+    const select = this.shadowRoot.querySelector("#reason-category");
+    const input = this.shadowRoot.querySelector("#reason-name");
+    if (select) select.value = categoryId;
+    input?.focus();
+  }
+
+  async _saveCategories() {
+    const rows = [...this.shadowRoot.querySelectorAll(".category-row")];
+    const categories = rows.map((row) => ({
+      id: row.dataset.categoryId,
+      name: row.querySelector(".category-name").value.trim(),
+      order: Math.trunc(Number(row.querySelector(".category-order").value)),
+    }));
+    if (categories.some((category) => !category.name || !Number.isFinite(category.order))) {
+      return this._showToast("Každá kategorie musí mít název a číselné pořadí.", true);
+    }
+    const data = this._cloneData();
+    data.profiles.find((item) => item.id === this.activeProfileId).reason_categories = categories;
+    this.appData = data;
+    await this._saveConfig("Kategorie byly uloženy");
+  }
+
+  async _addCategory() {
+    const input = this.shadowRoot.querySelector("#category-name-new");
+    const name = input.value.trim();
+    if (!name) return this._showToast("Zadejte název kategorie.", true);
+    const data = this._cloneData();
+    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
+    const highestOrder = Math.max(0, ...(profile.reason_categories || []).map((item) => Number(item.order) || 0));
+    profile.reason_categories = [...(profile.reason_categories || []), {
+      id: `category_${crypto.randomUUID().replaceAll("-", "")}`,
+      name,
+      order: highestOrder + 10,
+    }];
+    this.appData = data;
+    if (await this._saveConfig("Kategorie byla přidána")) input.value = "";
+  }
+
+  async _deleteCategory(categoryId) {
+    if (categoryId === "offline") {
+      return this._showToast("Offline je chráněná kategorie; lze změnit její název a pořadí.", true);
+    }
+    const category = this.activeProfile.reason_categories?.find((item) => item.id === categoryId);
+    if (!category || !confirm(`Smazat kategorii „${category.name}“? Její důvody se přesunou do Bez kategorie.`)) return;
+    const data = this._cloneData();
+    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
+    profile.reason_categories = profile.reason_categories.filter((item) => item.id !== categoryId);
+    profile.reasons.forEach((reason) => {
+      if (reason.category === categoryId) reason.category = "";
+    });
+    this.appData = data;
+    await this._saveConfig("Kategorie byla smazána; důvody byly přesunuty do Bez kategorie");
   }
 
   async _addReason() {
@@ -1012,78 +1103,8 @@ class BodikPanel extends LitElement {
     await this._saveConfig("Důvod byl smazán");
   }
 
-  async _addReward() {
-    const category = this.shadowRoot.querySelector("#reward-category").value.trim();
-    const valueText = this.shadowRoot.querySelector("#reward-value").value.trim();
-    const unit = this.shadowRoot.querySelector("#reward-unit").value.trim() || null;
-    const period = this.shadowRoot.querySelector("#reward-period").value.trim() || null;
-    const threshold = Number(this.shadowRoot.querySelector("#reward-threshold").value);
-    const value = valueText ? Number(valueText) : null;
-    if (!category || !Number.isFinite(threshold) || (value !== null && !Number.isFinite(value))) {
-      this._showToast("Vyplňte platnou kategorii a potřebné body.", true);
-      return;
-    }
-    const data = this._cloneData();
-    data.profiles.find((item) => item.id === this.activeProfileId).rewards.push({ id: crypto.randomUUID().replaceAll("-", ""), category, value, unit, period, threshold: Math.trunc(threshold) });
-    this.appData = data;
-    if (await this._saveConfig("Odměna byla přidána")) {
-      for (const selector of ["#reward-category", "#reward-value", "#reward-unit", "#reward-period", "#reward-threshold"]) this.shadowRoot.querySelector(selector).value = "";
-    }
-  }
-
-  async _saveRewardEdited(rewardId) {
-    const editor = this.shadowRoot.querySelector(`.reward-edit[data-reward-id="${CSS.escape(rewardId)}"]`);
-    const category = editor.querySelector(".edit-reward-category").value.trim();
-    const valueText = editor.querySelector(".edit-reward-value").value.trim();
-    const threshold = Number(editor.querySelector(".edit-reward-threshold").value);
-    const value = valueText ? Number(valueText) : null;
-    if (!category || !Number.isFinite(threshold) || (value !== null && !Number.isFinite(value))) return this._showToast("Vyplňte platné hodnoty odměny.", true);
-    const data = this._cloneData();
-    const rewards = data.profiles.find((item) => item.id === this.activeProfileId).rewards;
-    const reward = rewards.find((item) => item.id === rewardId);
-    Object.assign(reward, { category, value, unit: editor.querySelector(".edit-reward-unit").value.trim() || null, period: editor.querySelector(".edit-reward-period").value.trim() || null, threshold: Math.trunc(threshold) });
-    this.appData = data;
-    this._cancelEdit();
-    await this._saveConfig("Odměna byla upravena");
-  }
-
-  async _deleteReward(rewardId) {
-    const reward = this.rewards.find((item) => item.id === rewardId);
-    if (!reward || !confirm(`Smazat odměnu „${reward.category}“?`)) return;
-    const data = this._cloneData();
-    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
-    profile.rewards = profile.rewards.filter((item) => item.id !== rewardId);
-    this.appData = data;
-    await this._saveConfig("Odměna byla smazána");
-  }
-
   _cancelEdit() {
     this._editingReasonIndex = -1;
-    this._editingRewardId = null;
-  }
-
-  _formatRewardLevel(reward) {
-    return [reward.value, reward.unit, reward.period].filter((value) => value !== null && value !== undefined && value !== "").join(" ");
-  }
-
-  _computeGoals() {
-    const groups = new Map();
-    for (const reward of [...this.rewards].sort((a, b) => a.threshold - b.threshold)) {
-      if (!groups.has(reward.category)) groups.set(reward.category, []);
-      groups.get(reward.category).push(reward);
-    }
-    const unlocked = [];
-    let nextGoal = null;
-    for (const rewards of groups.values()) {
-      const achieved = rewards.filter((item) => this.score >= item.threshold).at(-1);
-      if (achieved) unlocked.push(`${achieved.category}${this._formatRewardLevel(achieved) ? ` (${this._formatRewardLevel(achieved)})` : ""}`);
-      const upcoming = rewards.find((item) => this.score < item.threshold);
-      if (upcoming && (!nextGoal || upcoming.threshold < nextGoal.threshold)) nextGoal = upcoming;
-    }
-    return {
-      unlockedText: unlocked.length ? unlocked.join(", ") : "Zatím žádná odměna",
-      nextGoalText: nextGoal ? `${nextGoal.category} · zbývá ${nextGoal.threshold - this.score} b.` : this.rewards.length ? "Všechny odměny jsou odemčené" : "Není nastavený cíl",
-    };
   }
 
   _downloadXLSX() {
@@ -1112,7 +1133,7 @@ class BodikPanel extends LitElement {
       bodik_version: VERSION,
       exported_at: new Date().toISOString(),
       data: {
-        data_version: this.appData.data_version || 3,
+        data_version: this.appData.data_version || 4,
         profiles: this.profiles,
         admin_user_ids: this.appData.admin_user_ids || [],
       },

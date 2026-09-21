@@ -1,5 +1,15 @@
 # Přehled změn
 
+## 9.1.0
+
+- odstranění starého v8 katalogu prahových odměn z aktivního rozhraní a výpočtů;
+- nový přehled dnešního nároku, náhledu na zítřek, týdenní odměny a odhadu kapesného;
+- profilové kategorie důvodů se stabilními ID, editovatelnými názvy a pořadím;
+- přehlednější správa důvodů po kategoriích a vyhledávání bez ohledu na českou diakritiku;
+- automaticky generovaný souhrn aktuálních pravidel z živé konfigurace;
+- trvalé zvýraznění splněného denního cíle a krátká animace při jeho dosažení;
+- idempotentní migrace schématu v4 zachovávající periodická data, skóre, historii a staré odměny ve skrytém `legacy_rewards`.
+
 ## 9.0.0
 
 - denní, týdenní a měsíční cíle odvozené z explicitně způsobilých transakcí;

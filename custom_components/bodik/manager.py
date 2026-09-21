@@ -33,6 +33,7 @@ from .const import (
     MAX_HISTORY,
     MAX_PERIOD_RESULTS,
     MAX_PROFILES,
+    MAX_REASON_CATEGORIES,
     MAX_REASONS,
     MAX_REWARDS,
     STORAGE_KEY,
@@ -41,6 +42,7 @@ from .const import (
 from .family_config import (
     FAMILY_CONFIG_VERSION,
     family_periodic_config,
+    family_reason_categories,
     family_reasons,
     is_family_profile,
 )
@@ -153,12 +155,16 @@ class BodikManager:
         """Normalize persisted data without trusting its shape blindly."""
         profiles: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
-        apply_family_seed = _integer(stored.get("data_version"), 1) < DATA_VERSION
+        apply_schema_migration = _integer(stored.get("data_version"), 1) < DATA_VERSION
         for raw in stored.get("profiles", [])[:MAX_PROFILES]:
             if not isinstance(raw, dict):
                 continue
             profile = self._sanitize_profile(
-                raw, None, seen_ids, apply_family_seed=apply_family_seed
+                raw,
+                None,
+                seen_ids,
+                apply_family_seed=apply_schema_migration,
+                migrate_categories=apply_schema_migration,
             )
             profiles.append(profile)
             seen_ids.add(profile["id"])
@@ -214,7 +220,13 @@ class BodikManager:
         for raw in raw_profiles[:MAX_PROFILES]:
             if not isinstance(raw, dict):
                 continue
-            profile = self._sanitize_profile(raw, None, seen_ids, apply_family_seed=True)
+            profile = self._sanitize_profile(
+                raw,
+                None,
+                seen_ids,
+                apply_family_seed=True,
+                migrate_categories=True,
+            )
             seen_ids.add(profile["id"])
 
             history_score = profile["score"]
@@ -278,6 +290,7 @@ class BodikManager:
         existing: dict[str, Any] | None,
         seen_ids: set[str],
         apply_family_seed: bool = False,
+        migrate_categories: bool = False,
     ) -> dict[str, Any]:
         """Validate profile configuration and preserve server-owned ledger fields."""
         raw_id = _text(raw.get("id"), 64)
@@ -329,10 +342,50 @@ class BodikManager:
             # but must not stay actionable alongside the new 30-point model.
             reasons = family_reasons()
 
-        rewards: list[dict[str, Any]] = []
-        raw_rewards = raw.get("rewards", [])
-        if isinstance(raw_rewards, list):
-            for item in raw_rewards[:MAX_REWARDS]:
+        offline_daily_cap = 8 if should_seed_family else self._sanitize_offline_cap(
+            raw.get("offline_daily_cap")
+        )
+        reason_categories = self._sanitize_reason_categories(
+            raw.get("reason_categories"), reasons, migrate_categories or should_seed_family
+        )
+        if offline_daily_cap is not None and not any(
+            category["id"] == "offline" for category in reason_categories
+        ):
+            existing_offline = next(
+                (
+                    deepcopy(category)
+                    for category in (existing or {}).get("reason_categories", [])
+                    if category.get("id") == "offline"
+                ),
+                None,
+            )
+            reason_categories.append(
+                existing_offline
+                or next(
+                    category
+                    for category in family_reason_categories()
+                    if category["id"] == "offline"
+                )
+            )
+            reason_categories.sort(key=lambda item: (item["order"], item["name"].casefold()))
+        category_ids = {item["id"] for item in reason_categories}
+        for reason in reasons:
+            if reason["category"] not in category_ids:
+                reason["category"] = ""
+
+        legacy_rewards: list[dict[str, Any]] = []
+        reward_sources: list[Any] = []
+        if existing is not None:
+            reward_sources.append(existing.get("legacy_rewards", []))
+        else:
+            reward_sources.extend((raw.get("legacy_rewards", []), raw.get("rewards", [])))
+        seen_reward_ids: set[str] = set()
+        for raw_rewards in reward_sources:
+            if not isinstance(raw_rewards, list):
+                continue
+            for item in raw_rewards:
+                if len(legacy_rewards) >= MAX_REWARDS:
+                    break
                 if not isinstance(item, dict):
                     continue
                 category = _text(item.get("category"), 120)
@@ -341,9 +394,10 @@ class BodikManager:
                 raw_value = item.get("value")
                 value = None if raw_value in {None, ""} else _integer(raw_value)
                 reward_id = _text(item.get("id"), 64)
-                if not _ID_RE.fullmatch(reward_id):
+                if not _ID_RE.fullmatch(reward_id) or reward_id in seen_reward_ids:
                     reward_id = uuid4().hex
-                rewards.append(
+                seen_reward_ids.add(reward_id)
+                legacy_rewards.append(
                     {
                         "id": reward_id,
                         "category": category,
@@ -382,20 +436,81 @@ class BodikManager:
             "theme": theme,
             "rules": _text(raw.get("rules"), 5000),
             "reasons": reasons,
-            "rewards": rewards,
+            "reason_categories": reason_categories,
+            "legacy_rewards": legacy_rewards,
             "history": history,
             "score": score,
             "periodic_config": periodic_config,
             "periodic": periodic,
-            "offline_daily_cap": 8 if should_seed_family else self._sanitize_offline_cap(
-                raw.get("offline_daily_cap")
-            ),
+            "offline_daily_cap": offline_daily_cap,
             "family_config_version": (
                 FAMILY_CONFIG_VERSION
                 if should_seed_family
                 else max(0, _integer(raw.get("family_config_version"), 0))
             ),
         }
+
+    def _sanitize_reason_categories(
+        self,
+        raw_categories: Any,
+        reasons: list[dict[str, Any]],
+        migrate: bool,
+    ) -> list[dict[str, Any]]:
+        """Normalize per-profile categories while keeping semantic IDs stable."""
+        defaults = {item["id"]: item for item in family_reason_categories()}
+        categories: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        if isinstance(raw_categories, list):
+            for item in raw_categories[:MAX_REASON_CATEGORIES]:
+                if not isinstance(item, dict):
+                    continue
+                category_id = _text(item.get("id"), 40)
+                name = _text(item.get("name"), 80)
+                if not _ID_RE.fullmatch(category_id) or category_id in seen or not name:
+                    continue
+                seen.add(category_id)
+                categories.append(
+                    {
+                        "id": category_id,
+                        "name": name,
+                        "order": _integer(item.get("order"), (len(categories) + 1) * 10),
+                    }
+                )
+
+        if migrate:
+            for category in family_reason_categories():
+                if category["id"] not in seen:
+                    categories.append(category)
+                    seen.add(category["id"])
+
+        referenced = {
+            _text(reason.get("category"), 40)
+            for reason in reasons
+            if _text(reason.get("category"), 40)
+        }
+        for category_id in sorted(referenced):
+            if category_id in seen or not _ID_RE.fullmatch(category_id):
+                continue
+            default = defaults.get(category_id)
+            categories.append(
+                deepcopy(default)
+                if default
+                else {
+                    "id": category_id,
+                    "name": category_id.replace("_", " ").strip().capitalize(),
+                    "order": (len(categories) + 1) * 10,
+                }
+            )
+            seen.add(category_id)
+
+        # ``offline`` is a protected semantic category whenever it is in use.
+        # Its display name/order remain editable, but removing the definition
+        # cannot silently disable the server-side positive-points cap.
+        if "offline" in referenced and "offline" not in seen:
+            categories.append(deepcopy(defaults["offline"]))
+
+        return sorted(categories, key=lambda item: (item["order"], item["name"].casefold()))
 
     def _sanitize_offline_cap(self, value: Any) -> int | None:
         """Validate the optional positive Offline-category daily point cap."""
@@ -593,6 +708,51 @@ class BodikManager:
             "offline_daily_cap": offline_cap,
         }
 
+    def generated_rules_summary(self, profile: dict[str, Any]) -> str:
+        """Build a concise human summary solely from active profile config."""
+        config = profile["periodic_config"]
+        weekdays = (
+            "pondělí",
+            "úterý",
+            "středu",
+            "čtvrtek",
+            "pátek",
+            "sobotu",
+            "neděli",
+        )
+        paragraphs = [
+            f"Denní cíl je {config['daily_target']} bodů.",
+            (
+                "Po splnění cíle získáš na další den "
+                f"{config['base_digital_minutes']} minut digitálního času."
+            ),
+        ]
+        if config["bonus_step_minutes"] > 0:
+            paragraphs.append(
+                f"Za každých dalších {config['bonus_step_points']} bodů dostaneš "
+                f"+{config['bonus_step_minutes']} minut, maximálně "
+                f"{config['max_digital_minutes']} minut."
+            )
+        paragraphs.append(
+            f"Týdenní cíl je {config['weekly_target']} bodů. Týden se vyhodnocuje "
+            f"v {weekdays[config['weekly_tick_weekday']]} v "
+            f"{config['weekly_tick_time']}."
+        )
+        maximum_allowance = round(
+            config["allowance_at_100"] * config["max_payout_percent"] / 100
+        )
+        paragraphs.append(
+            f"Měsíční cíl je {config['monthly_target']} bodů. Při 100 % je kapesné "
+            f"{config['allowance_at_100']} Kč a může růst až na "
+            f"{maximum_allowance} Kč."
+        )
+        if profile.get("offline_daily_cap") is not None:
+            paragraphs.append(
+                "Za Offline aktivity lze získat maximálně "
+                f"{profile['offline_daily_cap']} kladných bodů za den."
+            )
+        return "\n\n".join(paragraphs)
+
     async def async_can_manage(self, user_id: str | None) -> bool:
         """Return whether a HA user may mutate Bodik."""
         if not user_id:
@@ -616,6 +776,7 @@ class BodikManager:
                 profile["periodic"], profile["periodic_config"], now, zone
             )
             profile["reason_status"] = self.reason_status(profile, now)
+            profile["generated_rules"] = self.generated_rules_summary(profile)
         if not can_manage:
             client_data["admin_user_ids"] = []
         payload: dict[str, Any] = {
@@ -643,6 +804,7 @@ class BodikManager:
         raw_profiles: Any,
         existing_by_id: dict[str, dict[str, Any]] | None = None,
         apply_family_seed: bool = False,
+        migrate_categories: bool = False,
     ) -> list[dict[str, Any]]:
         """Validate a complete profile collection and its unique fields."""
         if not isinstance(raw_profiles, list) or not raw_profiles:
@@ -665,6 +827,7 @@ class BodikManager:
                 existing,
                 seen_ids,
                 apply_family_seed=apply_family_seed,
+                migrate_categories=migrate_categories,
             )
             normalized_name = profile["name"].casefold()
             if normalized_name in seen_names:
@@ -772,11 +935,11 @@ class BodikManager:
                     "Data byla mezitím změněna v jiném panelu. Obnovte stránku a import zopakujte."
                 )
 
+            needs_migration = _integer(raw_data.get("data_version"), 1) < DATA_VERSION
             profiles = self._sanitize_profile_collection(
                 raw_data.get("profiles", []),
-                apply_family_seed=(
-                    _integer(raw_data.get("data_version"), 1) < DATA_VERSION
-                ),
+                apply_family_seed=needs_migration,
+                migrate_categories=needs_migration,
             )
             admin_user_ids = await self._valid_manager_user_ids(
                 raw_data.get("admin_user_ids", [])
@@ -1109,10 +1272,6 @@ class BodikManager:
             reasons = "\n".join(
                 f"- {item['name']}: {item['value']:+d}" for item in profile["reasons"]
             ) or "- Nejsou nastaveny"
-            rewards = "\n".join(
-                f"- {item['category']} (cíl {item['threshold']} bodů)"
-                for item in profile["rewards"]
-            ) or "- Nejsou nastaveny"
             sections.append(
                 f"PROFIL: {profile['name']}\n"
                 f"BODY: {profile['score']}\n"
@@ -1120,8 +1279,8 @@ class BodikManager:
                 f"TENTO TÝDEN: {periodic['weekly']['points']} / {periodic['weekly']['target']}\n"
                 f"TENTO MĚSÍC: {periodic['monthly']['points']} / {periodic['monthly']['target']}\n"
                 f"DNEŠNÍ DIGITÁLNÍ ČAS: {periodic['daily']['today_entitlement']} minut\n"
-                f"PRAVIDLA: {profile['rules'] or 'Nejsou definována'}\n"
-                f"DŮVODY:\n{reasons}\n"
-                f"ODMĚNY:\n{rewards}"
+                f"AKTUÁLNÍ PRAVIDLA:\n{self.generated_rules_summary(profile)}\n"
+                f"DALŠÍ RODINNÁ PRAVIDLA: {profile['rules'] or 'Nejsou definována'}\n"
+                f"DŮVODY:\n{reasons}"
             )
         return {"bodik_info": "\n\n====================\n\n".join(sections)}
