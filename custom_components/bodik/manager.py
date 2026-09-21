@@ -298,7 +298,7 @@ class BodikManager:
         )
         reasons: list[dict[str, Any]] = []
         seen_reason_ids: set[str] = set()
-        raw_reasons = raw.get("reasons", [])
+        raw_reasons = [] if should_seed_family else raw.get("reasons", [])
         if isinstance(raw_reasons, list):
             for item in raw_reasons[:MAX_REASONS]:
                 if not isinstance(item, dict):
@@ -324,22 +324,10 @@ class BodikManager:
                     )
 
         if should_seed_family:
-            by_name = {item["name"].casefold(): item for item in reasons}
-            for seeded in family_reasons():
-                existing_reason = by_name.get(seeded["name"].casefold())
-                if existing_reason:
-                    existing_reason.update(
-                        {
-                            "value": seeded["value"],
-                            "max_occurrences_per_day": seeded["max_occurrences_per_day"],
-                            "category": seeded["category"],
-                        }
-                    )
-                elif len(reasons) < MAX_REASONS:
-                    if seeded["id"] in seen_reason_ids:
-                        seeded["id"] = uuid4().hex
-                    reasons.append(seeded)
-                    seen_reason_ids.add(seeded["id"])
+            # Issue #3 is the replacement active model for these two existing
+            # family profiles. Legacy reasons remain represented in history,
+            # but must not stay actionable alongside the new 30-point model.
+            reasons = family_reasons()
 
         rewards: list[dict[str, Any]] = []
         raw_rewards = raw.get("rewards", [])

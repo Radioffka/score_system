@@ -63,6 +63,7 @@ def load_manager_module():
 
 
 manager_module = load_manager_module()
+family_module = sys.modules["custom_components.bodik.family_config"]
 
 
 class ManagerMigrationTest(unittest.TestCase):
@@ -114,24 +115,44 @@ class ManagerMigrationTest(unittest.TestCase):
         self.assertEqual("Pomoc", second["profiles"][0]["reasons"][0]["name"])
         self.assertEqual(2, second["profiles"][0]["reasons"][0]["value"])
 
-    def test_family_profiles_receive_issue_3_values_only_once(self) -> None:
+    def test_family_migration_replaces_legacy_reasons_once_with_canonical_model(self) -> None:
         hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
         manager = manager_module.BodikManager(hass)
         manager._time_zone = lambda: timezone.utc
         stored = {
             "data_version": 2,
-            "profiles": [{
-                "id": "tomas", "name": "Tomášek", "score": 27,
-                "history": [{"time": "2026-09-01T10:00:00+00:00", "desc": "Původní", "prev": 25, "next": 27}],
-                "reasons": [{"name": "Vlastní původní důvod", "value": 7}],
-                "rewards": [{"id": "old", "category": "Původní odměna", "threshold": 20}],
-            }],
+            "admin_user_ids": ["parent"],
+            "profiles": [
+                {
+                    "id": "tomas", "name": "Tomášek", "score": 27,
+                    "scoreEntity": "input_number.tomas", "rules": "Rodinná pravidla",
+                    "childPhotoUrl": "/local/tomas.jpg",
+                    "history": [{"time": "2026-09-01T10:00:00+00:00", "desc": "Původní +50", "prev": -23, "next": 27}],
+                    "reasons": [
+                        {"id": "legacy_praise", "name": "Pochvala učitele / kroužku", "value": 50},
+                        {"name": "Jednička z tělocviku", "value": 40},
+                        {"name": "Aktivita", "value": 30},
+                        {"name": "Vlastní původní důvod", "value": 7},
+                    ],
+                    "rewards": [{"id": "old", "category": "Původní odměna", "threshold": 20}],
+                },
+                {
+                    "id": "kubik", "name": "Kubík", "score": 11,
+                    "reasons": [{"name": "Starý bonus", "value": 100}],
+                },
+            ],
         }
         migrated = manager._normalize_stored_data(stored)
         profile = migrated["profiles"][0]
+        second_profile = migrated["profiles"][1]
+        self.assertEqual(["parent"], migrated["admin_user_ids"])
         self.assertEqual(27, profile["score"])
-        self.assertEqual("Původní", profile["history"][0]["desc"])
+        self.assertEqual("Původní +50", profile["history"][0]["desc"])
+        self.assertEqual((-23, 27), (profile["history"][0]["prev"], profile["history"][0]["next"]))
         self.assertEqual("Původní odměna", profile["rewards"][0]["category"])
+        self.assertEqual("Rodinná pravidla", profile["rules"])
+        self.assertEqual("/local/tomas.jpg", profile["childPhotoUrl"])
+        self.assertEqual("input_number.tomas", profile["scoreEntity"])
         self.assertEqual(30, profile["periodic_config"]["daily_target"])
         self.assertEqual(120, profile["periodic_config"]["base_digital_minutes"])
         self.assertEqual(5, profile["periodic_config"]["bonus_step_points"])
@@ -149,7 +170,15 @@ class ManagerMigrationTest(unittest.TestCase):
         )
         self.assertEqual(8, profile["offline_daily_cap"])
         reasons = {item["name"]: item for item in profile["reasons"]}
-        self.assertIn("Vlastní původní důvod", reasons)
+        canonical = family_module.family_reasons()
+        self.assertEqual(44, len(profile["reasons"]))
+        self.assertEqual(canonical, profile["reasons"])
+        self.assertEqual(canonical, second_profile["reasons"])
+        self.assertNotIn("Vlastní původní důvod", reasons)
+        self.assertNotIn("Jednička z tělocviku", reasons)
+        self.assertNotIn("Aktivita", reasons)
+        self.assertNotIn("Starý bonus", {item["name"]: item for item in second_profile["reasons"]})
+        self.assertNotEqual("legacy_praise", reasons["Pochvala učitele / kroužku"]["id"])
         self.assertEqual(1, reasons["Ustlání postele"]["max_occurrences_per_day"])
         self.assertIsNone(reasons["Venčení psa"]["max_occurrences_per_day"])
         self.assertIsNone(reasons["Srovnání gauče a stolu dohromady"]["max_occurrences_per_day"])
@@ -183,6 +212,8 @@ class ManagerMigrationTest(unittest.TestCase):
         self.assertEqual(expected, {name: (item["value"], item["max_occurrences_per_day"]) for name, item in reasons.items() if name in expected})
         normalized_again = manager._normalize_stored_data(migrated)
         self.assertEqual(profile["reasons"], normalized_again["profiles"][0]["reasons"])
+        self.assertEqual(second_profile["reasons"], normalized_again["profiles"][1]["reasons"])
+        self.assertEqual(profile["history"], normalized_again["profiles"][0]["history"])
 
     def test_family_values_are_not_universal_defaults_for_new_schema(self) -> None:
         hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))

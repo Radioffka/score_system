@@ -13,7 +13,8 @@
 - cílené testy migrace, catch-up uzávěr, DST, záporných hodnot, výplat a profilů.
 - stabilní ID důvodů a backendové použití bez důvěry v hodnotu z frontendu;
 - volitelné denní limity důvodů a konfigurovatelný Offline strop;
-- jednorázová rodinná konfigurace issue #3 pro stávající profily Tomášek a Kuba/Kubík;
+- jednorázová rodinná konfigurace issue #3 pro stávající profily Tomášek a Kuba/Kubík,
+  včetně nahrazení starého aktivního katalogu přesně 44 kanonickými důvody;
 - testy denních limitů, neomezených a záporných důvodů, lokálního dne a týdenního DST.
 
 ## 8.1.0

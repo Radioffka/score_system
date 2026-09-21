@@ -132,6 +132,10 @@ strop 150 % a sada rodinných důvodů. Tyto hodnoty nejsou obecnými výchozím
 hodnotami nových instalací ani nových profilů a po migraci zůstávají pro každý
 profil samostatně editovatelné.
 
+U cílených rodinných profilů nahrazuje katalog 44 důvodů původní aktivní seznam
+v8. Staré názvy a hodnoty zůstávají beze změny v historických záznamech, ale
+zastaralé vysokobodové důvody již po migraci nelze nově použít.
+
 Pravidla „30 vs. 60 minut venku“ a „běžný vs. kompletní úklid“ platí pro jednu
 konkrétní aktivitu, ale Bodík zatím neeviduje ID jednotlivých aktivit. Proto
 nejsou automatizována jako složitý rules engine; rodič pro danou aktivitu použije
