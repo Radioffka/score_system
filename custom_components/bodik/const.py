@@ -1,7 +1,18 @@
 """Constants for the Bodik integration."""
 
 DOMAIN = "bodik"
-VERSION = "9.1.0"
+VERSION = "9.1.1"
+
+FRONTEND_URL_ROOT = "/bodik-panel"
+
+
+def frontend_versioned_url(version: str = VERSION) -> str:
+    """Return the immutable frontend namespace for a release."""
+    return f"{FRONTEND_URL_ROOT}/{version}"
+
+
+FRONTEND_VERSIONED_URL = frontend_versioned_url()
+FRONTEND_MODULE_URL = f"{FRONTEND_VERSIONED_URL}/bodik-panel.js"
 
 STORAGE_KEY = DOMAIN
 STORAGE_VERSION = 1

@@ -36,17 +36,15 @@ repozitář obsahuje pouze zdrojový kód integrace.
 
 ```yaml
 bodik: {}
-
-panel_custom:
-  - name: bodik-panel
-    url_path: bodik
-    sidebar_title: Bodík
-    sidebar_icon: mdi:trophy
-    module_url: /bodik-panel/bodik-panel.js
-    config: {}
 ```
 
 5. Zkontrolujte konfiguraci a restartujte Home Assistant Core.
+
+Bodík panel v postranní liště registruje automaticky. Stávající ruční
+`panel_custom` konfigurace zůstává podporovaná a není nutné ji ihned měnit;
+stabilní URL `/bodik-panel/bodik-panel.js` funguje jako kompatibilní zavaděč.
+Pokud ji později odstraníte, panel převezme integrace bez změny jeho adresy
+`/bodik`.
 
 Pokud používáte Bodík i jako Lovelace kartu, přidejte v nastavení dashboardu
 zdroj typu **JavaScript modul**:
@@ -80,12 +78,15 @@ pomocníků `input_number`; ukládá pouze jejich odkazy a entity ID.
 
 Každá publikovaná GitHub Release s vyšší verzí se v Home Assistantu zobrazí
 jako aktualizace HACS. Po instalaci aktualizace je potřeba restartovat Home
-Assistant Core a znovu načíst stránku.
+Assistant Core a znovu načíst stránku. Každý release používá vlastní adresář
+frontendových assetů (`/bodik-panel/<verze>/…`), takže běžná aktualizace
+nevyžaduje ruční změnu URL ani mazání cache prohlížeče.
 
 Vývojový postup:
 
 1. upravit soubory v `custom_components/bodik/`;
-2. zvýšit stejnou verzi v `manifest.json`, `const.py` a `bodik-panel.js`;
+2. zvýšit stejnou verzi v `manifest.json`, `const.py` a
+   `frontend/bodik-panel.js`;
 3. pracovat na samostatné větvi a otevřít pull request do `main`;
 4. GitHub Actions spustí jednotkové testy a ověří HACS i hassfest;
 5. po schválení a sloučení do `main` workflow vytvoří chybějící release;

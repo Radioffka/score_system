@@ -1,8 +1,9 @@
-// Bodík v9.1.0 — authenticated WebSocket client for the Bodík integration.
+// Bodík v9.1.1 — authenticated WebSocket client for the Bodík integration.
 import { LitElement, html, css } from "/local/lit-element.js";
 import { defaultReasonCategories, entitlementView, filterReasonGroups, orderedCategories } from "./bodik-ui-utils.mjs";
 
-const VERSION = "9.1.0";
+const VERSION = "9.1.1";
+const STYLESHEET_URL = new URL("./bodik-panel.css", import.meta.url).href;
 
 class BodikPanel extends LitElement {
   static get properties() {
@@ -240,7 +241,7 @@ class BodikPanel extends LitElement {
     this.setAttribute("theme", theme);
 
     return html`
-      <link rel="stylesheet" href="/bodik-panel/bodik-panel.css?v=${VERSION}" />
+      <link rel="stylesheet" href=${STYLESHEET_URL} />
       <div id="toast-notifications" role="status" aria-live="polite"></div>
       <main class="wrap ${compact ? "compact" : ""}">
         ${this._loading && !this.profiles.length

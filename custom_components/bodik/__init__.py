@@ -6,12 +6,12 @@ import logging
 
 import voluptuous as vol
 
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
 from .api import async_register_services, async_register_websocket_commands
 from .const import DOMAIN, VERSION
+from .frontend_registration import async_register_frontend
 from .manager import BodikManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,25 +36,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async_register_websocket_commands(hass, manager)
     async_register_services(hass, manager)
 
-    component_path = hass.config.path("custom_components", DOMAIN)
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                "/bodik-panel/bodik-panel.js",
-                f"{component_path}/bodik-panel.js",
-                False,
-            ),
-            StaticPathConfig(
-                "/bodik-panel/bodik-panel.css",
-                f"{component_path}/bodik-panel.css",
-                False,
-            ),
-            StaticPathConfig(
-                "/bodik-panel/bodik-ui-utils.mjs",
-                f"{component_path}/bodik-ui-utils.mjs",
-                False,
-            ),
-        ]
+    configured_panels = config.get("panel_custom", []) or []
+    panel_configured_in_yaml = any(
+        isinstance(panel, dict) and panel.get("url_path") == "bodik"
+        for panel in configured_panels
+    )
+    await async_register_frontend(
+        hass, panel_configured_in_yaml=panel_configured_in_yaml
     )
 
     _LOGGER.info("Bodík v%s je připraven", VERSION)
