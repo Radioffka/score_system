@@ -1,7 +1,7 @@
-// Bodík v8.1.0 — authenticated WebSocket client for the Bodík integration.
+// Bodík v9.0.0 — authenticated WebSocket client for the Bodík integration.
 import { LitElement, html, css } from "/local/lit-element.js";
 
-const VERSION = "8.1.0";
+const VERSION = "9.0.0";
 
 class BodikPanel extends LitElement {
   static get properties() {
@@ -340,6 +340,8 @@ class BodikPanel extends LitElement {
         </div>
       </section>
 
+      ${this._renderPeriodicDashboard()}
+
       ${this.activeProfile.rules
         ? html`<section class="card"><h2>Pravidla</h2><div class="rules-text">${this.activeProfile.rules}</div></section>`
         : ""}
@@ -349,18 +351,9 @@ class BodikPanel extends LitElement {
       <section class="card">
         <h2>Rychlé důvody</h2>
         ${!this._canManage ? html`<p class="note">Body mohou měnit pouze rodiče.</p>` : ""}
-        <div class="reasons">
-          ${this.reasons.length
-            ? this.reasons.map(
-                (reason) => html`
-                  <button class="reason" .reason=${reason} @click=${this._applyReason} ?disabled=${!this._canManage || this._saving}>
-                    <span class="name">${reason.name}</span>
-                    <span class="pts ${reason.value >= 0 ? "positive" : "negative"}">${reason.value >= 0 ? "+" : ""}${reason.value}</span>
-                  </button>
-                `,
-              )
-            : html`<p class="muted">Nejsou nastavené žádné rychlé důvody.</p>`}
-        </div>
+        ${this.reasons.length
+          ? this._renderReasonGroups()
+          : html`<p class="muted">Nejsou nastavené žádné rychlé důvody.</p>`}
       </section>
 
       ${this._renderRewardsSummary()}
@@ -395,6 +388,78 @@ class BodikPanel extends LitElement {
         ${visibleHistory.length < this.history.length
           ? html`<button class="btn ghost load-more" @click=${() => (this._historyLimit += 20)}>Načíst starší</button>`
           : ""}
+      </section>
+    `;
+  }
+
+  _renderReasonGroups() {
+    const categories = ["school", "home", "behaviour", "offline", "digital", ""];
+    return html`<div class="reason-groups">
+      ${categories.map((category) => {
+        const reasons = this.reasons.filter((reason) => (reason.category || "") === category);
+        if (!reasons.length) return "";
+        return html`<section class="reason-group">
+          <h3>${this._reasonCategoryLabel(category)}</h3>
+          <div class="reasons">
+            ${reasons.map((reason) => {
+              const status = this.activeProfile.reason_status?.reasons?.[reason.id];
+              return html`<button class="reason" .reason=${reason} title=${status?.message || ""} @click=${this._applyReason} ?disabled=${!this._canManage || this._saving || status?.available === false}>
+                <span class="name">${reason.name}${status?.limit ? html`<small>${status.used_today}/${status.limit} dnes</small>` : ""}${status && !status.available ? html`<small class="negative">${status.message}</small>` : ""}</span>
+                <span class="pts ${reason.value >= 0 ? "positive" : "negative"}">${reason.value >= 0 ? "+" : ""}${reason.value}</span>
+              </button>`;
+            })}
+          </div>
+        </section>`;
+      })}
+    </div>`;
+  }
+
+  _progressWidth(points, target, cap = 100) {
+    if (!target) return 0;
+    return Math.max(0, Math.min(cap, (Number(points) / Number(target)) * 100));
+  }
+
+  _renderPeriodicDashboard() {
+    const status = this.activeProfile?.periodic_status;
+    const config = this.activeProfile?.periodic_config;
+    if (!status || !config) return "";
+    const daily = status.daily;
+    const weekly = status.weekly;
+    const monthly = status.monthly;
+    const reward = weekly.active_reward;
+    const monthlyCap = Number(config.max_payout_percent || 150);
+    return html`
+      <section class="card periodic-card">
+        <div class="section-head">
+          <div><h2>Periodické cíle</h2><span class="muted small">Výkon se počítá odděleně od dlouhodobého skóre</span></div>
+        </div>
+        <article class="periodic-goal daily-goal">
+          <div class="periodic-heading"><div><span class="periodic-kicker">Dnes</span><strong>${daily.points} / ${daily.target} bodů</strong></div><span>${daily.remaining ? `Zbývá ${daily.remaining} b.` : "Cíl splněn"}</span></div>
+          <div class="progress"><span style=${`width:${this._progressWidth(daily.points, daily.target)}%`}></span></div>
+          <div class="periodic-details">
+            <span><strong>${daily.today_entitlement} / ${config.max_digital_minutes} min</strong> dostupných dnes</span>
+            <span>Pokud den skončí nyní: <strong>${daily.tomorrow_entitlement_preview} min zítra</strong></span>
+          </div>
+        </article>
+        <div class="periodic-secondary">
+          <article class="periodic-goal">
+            <div class="periodic-heading"><div><span class="periodic-kicker">Tento týden</span><strong>${weekly.points} / ${weekly.target}</strong></div></div>
+            <div class="progress weekly"><span style=${`width:${this._progressWidth(weekly.points, weekly.target)}%`}></span></div>
+            <div class="periodic-details single">
+              ${weekly.previous_result
+                ? html`<span>Minulý uzavřený týden: <strong>${weekly.previous_result.points} / ${weekly.previous_result.target}</strong>${weekly.previous_result.initial_partial ? " · úvodní částečné období" : ""}</span>`
+                : html`<span class="muted">První týden ještě nebyl uzavřen.</span>`}
+              ${reward?.enabled
+                ? html`<span class=${reward.unlocked ? "positive" : "muted"}><strong>${reward.label}</strong> · ${reward.unlocked ? "odemčeno" : "neodemčeno"}${reward.description ? html`<small>${reward.description}</small>` : ""}</span>`
+                : html`<span class="muted">Týdenní odměna není zapnutá.</span>`}
+            </div>
+          </article>
+          <article class="periodic-goal">
+            <div class="periodic-heading"><div><span class="periodic-kicker">Tento měsíc</span><strong>${monthly.points} / ${monthly.target} · ${monthly.estimated_allowance.completion_percent}%</strong></div></div>
+            <div class="progress monthly"><span style=${`width:${this._progressWidth(monthly.points, monthly.target, monthlyCap) / monthlyCap * 100}%`}></span></div>
+            <div class="periodic-details single"><span>Odhad kapesného: <strong>${monthly.estimated_allowance.amount} Kč</strong> (${monthly.estimated_allowance.payout_percent} %)</span></div>
+          </article>
+        </div>
       </section>
     `;
   }
@@ -485,6 +550,7 @@ class BodikPanel extends LitElement {
       </section>
 
       ${this._renderReasonSettings()}
+      ${this._renderPeriodicSettings()}
       ${this._renderRewardSettings()}
 
       <section class="card">
@@ -525,6 +591,100 @@ class BodikPanel extends LitElement {
     `;
   }
 
+  _renderPeriodicSettings() {
+    const cfg = this.activeProfile.periodic_config || {};
+    const reward = cfg.weekly_reward || {};
+    const bands = cfg.payout_bands || [];
+    return html`
+      <section class="card periodic-settings">
+        <h2>Periodické cíle · ${this.activeProfile.name}</h2>
+        <p class="note">Každý profil má vlastní nastavení. Změna dne nebo času týdenní uzávěry bezpečně zahájí nové částečné období.</p>
+        <h3>Denní cíl a digitální čas</h3>
+        <div class="settings-grid">
+          <label>Denní cíl<input id="periodic-daily-target" type="number" min="1" step="1" .value=${cfg.daily_target} /></label>
+          <label>Základní minuty<input id="periodic-base-minutes" type="number" min="0" step="1" .value=${cfg.base_digital_minutes} /></label>
+          <label>Bonusový krok v bodech<input id="periodic-step-points" type="number" min="1" step="1" .value=${cfg.bonus_step_points} /></label>
+          <label>Minuty za bonusový krok<input id="periodic-step-minutes" type="number" min="0" step="1" .value=${cfg.bonus_step_minutes} /></label>
+          <label>Maximum minut<input id="periodic-max-minutes" type="number" min="0" step="1" .value=${cfg.max_digital_minutes} /></label>
+        </div>
+        <h3>Týdenní cíl a odměna</h3>
+        <div class="settings-grid">
+          <label>Týdenní cíl<input id="periodic-weekly-target" type="number" min="1" step="1" .value=${cfg.weekly_target} /></label>
+          <label>Den uzávěry<select id="periodic-weekday">${["Pondělí", "Úterý", "Středa", "Čtvrtek", "Pátek", "Sobota", "Neděle"].map((name, index) => html`<option value=${index} ?selected=${Number(cfg.weekly_tick_weekday) === index}>${name}</option>`)}</select></label>
+          <label>Čas uzávěry<input id="periodic-week-time" type="time" .value=${cfg.weekly_tick_time || "17:00"} /></label>
+          <label class="checkbox-field"><input id="periodic-reward-enabled" type="checkbox" .checked=${reward.enabled === true} /> Odměna zapnutá</label>
+          <label>Název odměny<input id="periodic-reward-label" maxlength="120" .value=${reward.label || ""} /></label>
+          <label class="wide">Popis odměny<input id="periodic-reward-description" maxlength="500" .value=${reward.description || ""} /></label>
+        </div>
+        <h3>Měsíční cíl a kapesné</h3>
+        <div class="settings-grid">
+          <label>Měsíční cíl<input id="periodic-monthly-target" type="number" min="1" step="1" .value=${cfg.monthly_target} /></label>
+          <label>Kapesné při 100 % (Kč)<input id="periodic-allowance" type="number" min="0" step="1" .value=${cfg.allowance_at_100} /></label>
+          <label>Maximum výplaty (%)<input id="periodic-max-payout" type="number" min="100" step="1" .value=${cfg.max_payout_percent} /></label>
+        </div>
+        <div class="payout-bands">
+          <div class="section-head"><strong>Výplatní pásma do 100 %</strong><button class="btn ghost small-btn" @click=${this._addPayoutBand}>Přidat pásmo</button></div>
+          ${bands.map((band, index) => html`
+            <div class="band-row" data-band-index=${index}>
+              <label>Od výkonu %<input class="band-min" type="number" min="0" max="100" .value=${band.minimum_percent} /></label>
+              <label>Vyplatit %<input class="band-payout" type="number" min="0" max="100" .value=${band.payout_percent} /></label>
+              <button class="btn danger small-btn" @click=${() => this._deletePayoutBand(index)} ?disabled=${band.minimum_percent === 0 || band.minimum_percent === 100}>Odebrat</button>
+            </div>`)}
+        </div>
+        <button class="btn" @click=${this._savePeriodicSettings} ?disabled=${this._saving}>Uložit periodické cíle</button>
+      </section>
+    `;
+  }
+
+  async _addPayoutBand() {
+    const current = this._periodicConfigFromForm();
+    const used = new Set(current.payout_bands.map((band) => Number(band.minimum_percent)));
+    const minimum = [25, 10, 20, 30, 40, 60, 80, 90].find((value) => !used.has(value));
+    if (minimum === undefined) return this._showToast("Nejprve upravte nebo odeberte některé pásmo.", true);
+    const data = this._cloneData();
+    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
+    profile.periodic_config = current;
+    profile.periodic_config.payout_bands.push({ minimum_percent: minimum, payout_percent: minimum });
+    profile.periodic_config.payout_bands.sort((a, b) => a.minimum_percent - b.minimum_percent);
+    this.appData = data;
+  }
+
+  _deletePayoutBand(index) {
+    const data = this._cloneData();
+    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
+    profile.periodic_config = this._periodicConfigFromForm();
+    profile.periodic_config.payout_bands.splice(index, 1);
+    this.appData = data;
+  }
+
+  _periodicConfigFromForm() {
+    const root = this.shadowRoot;
+    const integer = (selector) => Number(root.querySelector(selector)?.value);
+    const bands = [...root.querySelectorAll(".band-row")].map((row) => ({
+      minimum_percent: Number(row.querySelector(".band-min").value),
+      payout_percent: Number(row.querySelector(".band-payout").value),
+    }));
+    return {
+      daily_target: integer("#periodic-daily-target"), base_digital_minutes: integer("#periodic-base-minutes"),
+      bonus_step_points: integer("#periodic-step-points"), bonus_step_minutes: integer("#periodic-step-minutes"),
+      max_digital_minutes: integer("#periodic-max-minutes"), weekly_target: integer("#periodic-weekly-target"),
+      weekly_tick_weekday: integer("#periodic-weekday"), weekly_tick_time: root.querySelector("#periodic-week-time").value,
+      weekly_reward: { enabled: root.querySelector("#periodic-reward-enabled").checked,
+        label: root.querySelector("#periodic-reward-label").value.trim(),
+        description: root.querySelector("#periodic-reward-description").value.trim() },
+      monthly_target: integer("#periodic-monthly-target"), allowance_at_100: integer("#periodic-allowance"),
+      payout_bands: bands, max_payout_percent: integer("#periodic-max-payout"),
+    };
+  }
+
+  async _savePeriodicSettings() {
+    const data = this._cloneData();
+    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
+    profile.periodic_config = this._periodicConfigFromForm();
+    this.appData = data;
+    await this._saveConfig("Periodické cíle byly uloženy");
+  }
+
   _renderProfileEditor(profile) {
     return html`
       <article class="profile-item" data-profile-id=${profile.id}>
@@ -555,28 +715,46 @@ class BodikPanel extends LitElement {
     return html`
       <section class="card">
         <h2>Důvody · ${this.activeProfile.name}</h2>
-        <div class="form-row">
+        <div class="offline-cap-row">
+          <label>Denní strop kladných Offline bodů<input id="offline-daily-cap" type="number" min="1" step="1" .value=${this.activeProfile.offline_daily_cap ?? ""} placeholder="Bez stropu" /></label>
+          <button class="btn ghost" @click=${this._saveOfflineCap} ?disabled=${this._saving}>Uložit Offline strop</button>
+          <span class="muted small">Dnes: ${this.activeProfile.reason_status?.offline_points_today || 0} / ${this.activeProfile.offline_daily_cap ?? "∞"} b.</span>
+        </div>
+        <div class="reason-form">
           <label class="grow">Název<input id="reason-name" maxlength="120" /></label>
           <label class="number-field">Body<input id="reason-points" type="number" step="1" /></label>
+          <label>Kategorie<select id="reason-category">${this._reasonCategoryOptions("")}</select></label>
+          <label>Max. použití za den<input id="reason-limit" type="number" min="1" step="1" placeholder="Bez limitu" /></label>
           <button class="btn align-end" @click=${this._addReason} ?disabled=${this._saving}>Přidat</button>
         </div>
         <div class="manage-grid">
           ${this.reasons.map((reason, index) =>
             this._editingReasonIndex === index
               ? html`
-                  <article class="manage-item editing">
+                  <article class="manage-item editing reason-edit">
                     <input class="edit-reason-name" maxlength="120" .value=${reason.name} aria-label="Název důvodu" />
                     <input class="edit-reason-value" type="number" step="1" .value=${reason.value} aria-label="Body" />
+                    <select class="edit-reason-category" aria-label="Kategorie">${this._reasonCategoryOptions(reason.category || "")}</select>
+                    <input class="edit-reason-limit" type="number" min="1" step="1" .value=${reason.max_occurrences_per_day ?? ""} placeholder="Bez denního limitu" aria-label="Maximální počet použití za den" />
                     <div class="item-actions"><button class="btn" @click=${() => this._saveReasonEdited(index)}>Uložit</button><button class="btn ghost" @click=${this._cancelEdit}>Zrušit</button></div>
                   </article>
                 `
               : html`
-                  <article class="manage-item"><span>${reason.name}</span><strong class=${reason.value >= 0 ? "positive" : "negative"}>${reason.value >= 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>
+                  <article class="manage-item"><span><strong>${reason.name}</strong><small>${this._reasonCategoryLabel(reason.category)} · ${reason.max_occurrences_per_day ? `max. ${reason.max_occurrences_per_day}× denně` : "bez denního limitu"}</small></span><strong class=${reason.value >= 0 ? "positive" : "negative"}>${reason.value >= 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>
                 `,
           )}
         </div>
       </section>
     `;
+  }
+
+  _reasonCategoryOptions(selected) {
+    const categories = [["", "Bez kategorie"], ["school", "Škola"], ["home", "Domov"], ["behaviour", "Chování"], ["offline", "Offline aktivity"], ["digital", "Digitální disciplína"]];
+    return categories.map(([value, label]) => html`<option value=${value} ?selected=${selected === value}>${label}</option>`);
+  }
+
+  _reasonCategoryLabel(value) {
+    return { school: "Škola", home: "Domov", behaviour: "Chování", offline: "Offline aktivity", digital: "Digitální disciplína" }[value] || "Bez kategorie";
   }
 
   _renderRewardSettings() {
@@ -653,9 +831,24 @@ class BodikPanel extends LitElement {
     this._adjustScore(Number(event.currentTarget.dataset.delta), "Manuální změna");
   }
 
-  _applyReason(event) {
+  async _applyReason(event) {
     const reason = event.currentTarget.reason;
-    this._adjustScore(reason.value, reason.name);
+    if (!this._canManage || this._saving || !this.activeProfile || !reason?.id) return;
+    this._saving = true;
+    try {
+      await this.hass.callWS({
+        type: "bodik/apply_reason",
+        profile_id: this.activeProfile.id,
+        reason_id: reason.id,
+      });
+      await this._loadAllData({ silent: true });
+      this._showToast(`${reason.name}: skóre ${this.score}`);
+    } catch (error) {
+      await this._loadAllData({ silent: true });
+      this._showToast(this._errorMessage(error, "Důvod nelze použít."), true, 7000);
+    } finally {
+      this._saving = false;
+    }
   }
 
   _applyCustomDelta() {
@@ -753,18 +946,28 @@ class BodikPanel extends LitElement {
   async _addReason() {
     const nameInput = this.shadowRoot.querySelector("#reason-name");
     const valueInput = this.shadowRoot.querySelector("#reason-points");
+    const limitInput = this.shadowRoot.querySelector("#reason-limit");
     const name = nameInput.value.trim();
     const value = Number(valueInput.value);
-    if (!name || !Number.isFinite(value)) {
+    const limit = limitInput.value.trim() ? Number(limitInput.value) : null;
+    if (!name || !Number.isFinite(value) || (limit !== null && (!Number.isInteger(limit) || limit < 1))) {
       this._showToast("Vyplňte název a počet bodů.", true);
       return;
     }
     const data = this._cloneData();
-    data.profiles.find((item) => item.id === this.activeProfileId).reasons.push({ name, value: Math.trunc(value) });
+    data.profiles.find((item) => item.id === this.activeProfileId).reasons.push({
+      id: crypto.randomUUID().replaceAll("-", ""),
+      name,
+      value: Math.trunc(value),
+      category: this.shadowRoot.querySelector("#reason-category").value,
+      max_occurrences_per_day: limit,
+    });
     this.appData = data;
     if (await this._saveConfig("Důvod byl přidán")) {
       nameInput.value = "";
       valueInput.value = "";
+      limitInput.value = "";
+      this.shadowRoot.querySelector("#reason-category").value = "";
     }
   }
 
@@ -772,12 +975,32 @@ class BodikPanel extends LitElement {
     const editor = this.shadowRoot.querySelector(".manage-item.editing");
     const name = editor.querySelector(".edit-reason-name").value.trim();
     const value = Number(editor.querySelector(".edit-reason-value").value);
-    if (!name || !Number.isFinite(value)) return this._showToast("Vyplňte název a počet bodů.", true);
+    const limitText = editor.querySelector(".edit-reason-limit").value.trim();
+    const limit = limitText ? Number(limitText) : null;
+    if (!name || !Number.isFinite(value) || (limit !== null && (!Number.isInteger(limit) || limit < 1))) return this._showToast("Vyplňte platný název, body a denní limit.", true);
     const data = this._cloneData();
-    data.profiles.find((item) => item.id === this.activeProfileId).reasons[index] = { name, value: Math.trunc(value) };
+    const reason = data.profiles.find((item) => item.id === this.activeProfileId).reasons[index];
+    Object.assign(reason, {
+      name,
+      value: Math.trunc(value),
+      category: editor.querySelector(".edit-reason-category").value,
+      max_occurrences_per_day: limit,
+    });
     this.appData = data;
     this._cancelEdit();
     await this._saveConfig("Důvod byl upraven");
+  }
+
+  async _saveOfflineCap() {
+    const input = this.shadowRoot.querySelector("#offline-daily-cap");
+    const value = input.value.trim() ? Number(input.value) : null;
+    if (value !== null && (!Number.isInteger(value) || value < 1)) {
+      return this._showToast("Offline strop musí být kladné celé číslo nebo prázdný.", true);
+    }
+    const data = this._cloneData();
+    data.profiles.find((item) => item.id === this.activeProfileId).offline_daily_cap = value;
+    this.appData = data;
+    await this._saveConfig("Offline denní strop byl uložen");
   }
 
   async _deleteReason(index) {
@@ -885,10 +1108,11 @@ class BodikPanel extends LitElement {
     if (!this._canManage || !this.profiles.length) return;
     const backup = {
       format: "bodik-backup",
-      format_version: 1,
+      format_version: 2,
       bodik_version: VERSION,
       exported_at: new Date().toISOString(),
       data: {
+        data_version: this.appData.data_version || 3,
         profiles: this.profiles,
         admin_user_ids: this.appData.admin_user_ids || [],
       },
@@ -969,6 +1193,9 @@ class BodikPanel extends LitElement {
 }
 
 if (!customElements.get("bodik-panel")) customElements.define("bodik-panel", BodikPanel);
+if (!customElements.get("bodik-panel-v9")) {
+  customElements.define("bodik-panel-v9", class BodikPanelV9Alias extends BodikPanel {});
+}
 if (!customElements.get("bodik-panel-v8")) {
   customElements.define("bodik-panel-v8", class BodikPanelV8Alias extends BodikPanel {});
 }
