@@ -1,5 +1,14 @@
 # Přehled změn
 
+## 9.1.1
+
+- všechny frontendové assety používají automaticky verzovaný adresář odvozený
+  z verze integrace;
+- relativní importy modulů i CSS sdílejí stejný neměnný cache namespace;
+- panel v postranní liště se nově registruje automaticky;
+- staré ruční `panel_custom` a Lovelace URL zůstávají funkční přes kompatibilní
+  zavaděč bez nutnosti měnit YAML při dalších vydáních.
+
 ## 9.1.0
 
 - odstranění starého v8 katalogu prahových odměn z aktivního rozhraní a výpočtů;

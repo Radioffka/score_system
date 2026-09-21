@@ -7,7 +7,7 @@ import {
   filterReasonGroups,
   normalizeReasonSearch,
   orderedCategories,
-} from "../custom_components/bodik/bodik-ui-utils.mjs";
+} from "../custom_components/bodik/frontend/bodik-ui-utils.mjs";
 
 test("quick reason search is case and Czech-diacritic insensitive without mutation", () => {
   const reasons = [
@@ -52,7 +52,7 @@ test("entitlement view keeps today and tomorrow semantics separate", () => {
 
 test("panel retires the legacy catalogue and labels periodic entitlement semantics", async () => {
   const source = await readFile(
-    new URL("../custom_components/bodik/bodik-panel.js", import.meta.url),
+    new URL("../custom_components/bodik/frontend/bodik-panel.js", import.meta.url),
     "utf8",
   );
   assert.doesNotMatch(source, /_renderRewardsSummary|_renderRewardSettings|_computeGoals/);

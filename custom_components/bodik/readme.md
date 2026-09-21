@@ -1,4 +1,4 @@
-# Bodík v9.1
+# Bodík v9.1.1
 
 Bodík je lokální rodinný bodovací systém integrovaný přímo do Home Assistantu.
 Obsahuje profily dětí, důvody bodových změn, periodické nároky a historii.
@@ -26,22 +26,17 @@ Obsahuje profily dětí, důvody bodových změn, periodické nároky a historii
 
 ## Instalace
 
-V `configuration.yaml` musí být integrace a vlastní panel:
+V `configuration.yaml` stačí zapnout integraci:
 
 ```yaml
 bodik: {}
-
-panel_custom:
-  - name: bodik-panel
-    url_path: bodik
-    sidebar_title: Bodík
-    sidebar_icon: mdi:trophy
-    module_url: /bodik-panel/bodik-panel.js?v=9.1.0
-    config: {}
 ```
 
-Po změně Pythonu, manifestu nebo `panel_custom` je nutný restart Home Assistant
-Core. Po změně pouze dashboardového zdroje obvykle stačí znovu načíst stránku.
+Panel se registruje automaticky. Starší ruční `panel_custom` konfigurace je dál
+kompatibilní přes `/bodik-panel/bodik-panel.js` a nemusí se při každém releasu
+upravovat. Po aktualizaci přes HACS je nutný restart Home Assistant Core;
+frontend se následně načte z adresáře obsahujícího verzi releasu, bez ručního
+mazání cache.
 
 ## Zálohy a obnova
 
