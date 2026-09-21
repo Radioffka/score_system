@@ -1,0 +1,67 @@
+adjust_score:
+  name: Upravit body
+  description: Přičte nebo odečte body vybranému profilu a zapíše změnu do historie.
+  fields:
+    profile:
+      name: Profil
+      description: ID profilu, jeho název nebo navázaná entita bodů.
+      required: true
+      example: "Tomášek"
+      selector:
+        text:
+    amount:
+      name: Změna
+      description: Počet bodů, který se má přičíst; záporná hodnota body odečte.
+      required: true
+      example: 5
+      selector:
+        number:
+          min: -1000000
+          max: 1000000
+          mode: box
+    reason:
+      name: Důvod
+      description: Text zapsaný do historie.
+      required: false
+      example: "Pomoc s úklidem"
+      selector:
+        text:
+
+set_score:
+  name: Nastavit body
+  description: Nastaví profilu přesný počet bodů a zapíše změnu do historie.
+  fields:
+    profile:
+      name: Profil
+      description: ID profilu, jeho název nebo navázaná entita bodů.
+      required: true
+      example: "Tomášek"
+      selector:
+        text:
+    value:
+      name: Nový stav
+      description: Přesný počet bodů po provedení služby.
+      required: true
+      example: 0
+      selector:
+        number:
+          min: -1000000
+          max: 1000000
+          mode: box
+    reason:
+      name: Důvod
+      description: Text zapsaný do historie.
+      required: false
+      example: "Ruční oprava"
+      selector:
+        text:
+
+get_info:
+  name: Informace o Bodíku
+  description: Vrátí verzi integrace a základní provozní informace.
+  fields: {}
+
+read_scores:
+  name: Přečíst body
+  description: Vrátí aktuální bodový stav všech profilů.
+  fields: {}
