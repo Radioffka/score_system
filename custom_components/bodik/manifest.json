@@ -2,7 +2,7 @@
   "domain": "bodik",
   "name": "Bodík",
   "version": "8.0.6",
-  "dependencies": [],
+  "dependencies": ["http"],
   "codeowners": ["@Radioffka"],
   "documentation": "https://github.com/Radioffka/score_system",
   "issue_tracker": "https://github.com/Radioffka/score_system/issues",
