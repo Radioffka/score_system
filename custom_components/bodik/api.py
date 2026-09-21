@@ -17,6 +17,7 @@ from .const import (
     MAX_ABS_SCORE,
     SERVICE_ADJUST_SCORE,
     SERVICE_GET_INFO,
+    SERVICE_READ_PERIODIC,
     SERVICE_READ_SCORES,
     SERVICE_SET_SCORE,
 )
@@ -286,10 +287,16 @@ def async_register_services(hass: HomeAssistant, manager: BodikManager) -> None:
         return {"profile": profile, **manager.scores_response()}
 
     async def handle_info(_call: ServiceCall) -> dict[str, Any]:
+        await manager.async_close_elapsed_periods()
         return manager.info_response()
 
     async def handle_scores(_call: ServiceCall) -> dict[str, Any]:
+        await manager.async_close_elapsed_periods()
         return manager.scores_response()
+
+    async def handle_periodic(_call: ServiceCall) -> dict[str, Any]:
+        await manager.async_close_elapsed_periods()
+        return {"profiles": manager.scores_response()["profiles"]}
 
     hass.services.async_register(
         DOMAIN,
@@ -316,6 +323,13 @@ def async_register_services(hass: HomeAssistant, manager: BodikManager) -> None:
         DOMAIN,
         SERVICE_READ_SCORES,
         handle_scores,
+        schema=vol.Schema({}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_READ_PERIODIC,
+        handle_periodic,
         schema=vol.Schema({}),
         supports_response=SupportsResponse.ONLY,
     )

@@ -1,4 +1,4 @@
-"""Bodík v8: authenticated panel and transactional points ledger."""
+"""Bodík v9: authenticated ledger with periodic goals and rewards."""
 
 from __future__ import annotations
 

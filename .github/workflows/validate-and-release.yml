@@ -10,6 +10,19 @@ on:
 permissions: {}
 
 jobs:
+  test-periodic-engine:
+    name: Periodic engine tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
   validate-hacs:
     name: HACS validation
     runs-on: ubuntu-latest
@@ -36,6 +49,7 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'workflow_dispatch'
     needs:
+      - test-periodic-engine
       - validate-hacs
       - validate-hassfest
     runs-on: ubuntu-latest

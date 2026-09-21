@@ -1,7 +1,7 @@
-// Bodík v8.1.0 — authenticated WebSocket client for the Bodík integration.
+// Bodík v9.0.0 — authenticated WebSocket client for the Bodík integration.
 import { LitElement, html, css } from "/local/lit-element.js";
 
-const VERSION = "8.1.0";
+const VERSION = "9.0.0";
 
 class BodikPanel extends LitElement {
   static get properties() {
@@ -340,6 +340,8 @@ class BodikPanel extends LitElement {
         </div>
       </section>
 
+      ${this._renderPeriodicDashboard()}
+
       ${this.activeProfile.rules
         ? html`<section class="card"><h2>Pravidla</h2><div class="rules-text">${this.activeProfile.rules}</div></section>`
         : ""}
@@ -395,6 +397,56 @@ class BodikPanel extends LitElement {
         ${visibleHistory.length < this.history.length
           ? html`<button class="btn ghost load-more" @click=${() => (this._historyLimit += 20)}>Načíst starší</button>`
           : ""}
+      </section>
+    `;
+  }
+
+  _progressWidth(points, target, cap = 100) {
+    if (!target) return 0;
+    return Math.max(0, Math.min(cap, (Number(points) / Number(target)) * 100));
+  }
+
+  _renderPeriodicDashboard() {
+    const status = this.activeProfile?.periodic_status;
+    const config = this.activeProfile?.periodic_config;
+    if (!status || !config) return "";
+    const daily = status.daily;
+    const weekly = status.weekly;
+    const monthly = status.monthly;
+    const reward = weekly.active_reward;
+    const monthlyCap = Number(config.max_payout_percent || 150);
+    return html`
+      <section class="card periodic-card">
+        <div class="section-head">
+          <div><h2>Periodické cíle</h2><span class="muted small">Výkon se počítá odděleně od dlouhodobého skóre</span></div>
+        </div>
+        <article class="periodic-goal daily-goal">
+          <div class="periodic-heading"><div><span class="periodic-kicker">Dnes</span><strong>${daily.points} / ${daily.target} bodů</strong></div><span>${daily.remaining ? `Zbývá ${daily.remaining} b.` : "Cíl splněn"}</span></div>
+          <div class="progress"><span style=${`width:${this._progressWidth(daily.points, daily.target)}%`}></span></div>
+          <div class="periodic-details">
+            <span><strong>${daily.today_entitlement} / ${config.max_digital_minutes} min</strong> dostupných dnes</span>
+            <span>Pokud den skončí nyní: <strong>${daily.tomorrow_entitlement_preview} min zítra</strong></span>
+          </div>
+        </article>
+        <div class="periodic-secondary">
+          <article class="periodic-goal">
+            <div class="periodic-heading"><div><span class="periodic-kicker">Tento týden</span><strong>${weekly.points} / ${weekly.target}</strong></div></div>
+            <div class="progress weekly"><span style=${`width:${this._progressWidth(weekly.points, weekly.target)}%`}></span></div>
+            <div class="periodic-details single">
+              ${weekly.previous_result
+                ? html`<span>Minulý uzavřený týden: <strong>${weekly.previous_result.points} / ${weekly.previous_result.target}</strong>${weekly.previous_result.initial_partial ? " · úvodní částečné období" : ""}</span>`
+                : html`<span class="muted">První týden ještě nebyl uzavřen.</span>`}
+              ${reward?.enabled
+                ? html`<span class=${reward.unlocked ? "positive" : "muted"}><strong>${reward.label}</strong> · ${reward.unlocked ? "odemčeno" : "neodemčeno"}${reward.description ? html`<small>${reward.description}</small>` : ""}</span>`
+                : html`<span class="muted">Týdenní odměna není zapnutá.</span>`}
+            </div>
+          </article>
+          <article class="periodic-goal">
+            <div class="periodic-heading"><div><span class="periodic-kicker">Tento měsíc</span><strong>${monthly.points} / ${monthly.target} · ${monthly.estimated_allowance.completion_percent}%</strong></div></div>
+            <div class="progress monthly"><span style=${`width:${this._progressWidth(monthly.points, monthly.target, monthlyCap) / monthlyCap * 100}%`}></span></div>
+            <div class="periodic-details single"><span>Odhad kapesného: <strong>${monthly.estimated_allowance.amount} Kč</strong> (${monthly.estimated_allowance.payout_percent} %)</span></div>
+          </article>
+        </div>
       </section>
     `;
   }
@@ -485,6 +537,7 @@ class BodikPanel extends LitElement {
       </section>
 
       ${this._renderReasonSettings()}
+      ${this._renderPeriodicSettings()}
       ${this._renderRewardSettings()}
 
       <section class="card">
@@ -523,6 +576,100 @@ class BodikPanel extends LitElement {
         <button class="btn ghost" @click=${() => this._loadAllData()}>Otestovat spojení</button>
       </section>
     `;
+  }
+
+  _renderPeriodicSettings() {
+    const cfg = this.activeProfile.periodic_config || {};
+    const reward = cfg.weekly_reward || {};
+    const bands = cfg.payout_bands || [];
+    return html`
+      <section class="card periodic-settings">
+        <h2>Periodické cíle · ${this.activeProfile.name}</h2>
+        <p class="note">Každý profil má vlastní nastavení. Změna dne nebo času týdenní uzávěry bezpečně zahájí nové částečné období.</p>
+        <h3>Denní cíl a digitální čas</h3>
+        <div class="settings-grid">
+          <label>Denní cíl<input id="periodic-daily-target" type="number" min="1" step="1" .value=${cfg.daily_target} /></label>
+          <label>Základní minuty<input id="periodic-base-minutes" type="number" min="0" step="1" .value=${cfg.base_digital_minutes} /></label>
+          <label>Bonusový krok v bodech<input id="periodic-step-points" type="number" min="1" step="1" .value=${cfg.bonus_step_points} /></label>
+          <label>Minuty za bonusový krok<input id="periodic-step-minutes" type="number" min="0" step="1" .value=${cfg.bonus_step_minutes} /></label>
+          <label>Maximum minut<input id="periodic-max-minutes" type="number" min="0" step="1" .value=${cfg.max_digital_minutes} /></label>
+        </div>
+        <h3>Týdenní cíl a odměna</h3>
+        <div class="settings-grid">
+          <label>Týdenní cíl<input id="periodic-weekly-target" type="number" min="1" step="1" .value=${cfg.weekly_target} /></label>
+          <label>Den uzávěry<select id="periodic-weekday">${["Pondělí", "Úterý", "Středa", "Čtvrtek", "Pátek", "Sobota", "Neděle"].map((name, index) => html`<option value=${index} ?selected=${Number(cfg.weekly_tick_weekday) === index}>${name}</option>`)}</select></label>
+          <label>Čas uzávěry<input id="periodic-week-time" type="time" .value=${cfg.weekly_tick_time || "17:00"} /></label>
+          <label class="checkbox-field"><input id="periodic-reward-enabled" type="checkbox" .checked=${reward.enabled === true} /> Odměna zapnutá</label>
+          <label>Název odměny<input id="periodic-reward-label" maxlength="120" .value=${reward.label || ""} /></label>
+          <label class="wide">Popis odměny<input id="periodic-reward-description" maxlength="500" .value=${reward.description || ""} /></label>
+        </div>
+        <h3>Měsíční cíl a kapesné</h3>
+        <div class="settings-grid">
+          <label>Měsíční cíl<input id="periodic-monthly-target" type="number" min="1" step="1" .value=${cfg.monthly_target} /></label>
+          <label>Kapesné při 100 % (Kč)<input id="periodic-allowance" type="number" min="0" step="1" .value=${cfg.allowance_at_100} /></label>
+          <label>Maximum výplaty (%)<input id="periodic-max-payout" type="number" min="100" step="1" .value=${cfg.max_payout_percent} /></label>
+        </div>
+        <div class="payout-bands">
+          <div class="section-head"><strong>Výplatní pásma do 100 %</strong><button class="btn ghost small-btn" @click=${this._addPayoutBand}>Přidat pásmo</button></div>
+          ${bands.map((band, index) => html`
+            <div class="band-row" data-band-index=${index}>
+              <label>Od výkonu %<input class="band-min" type="number" min="0" max="100" .value=${band.minimum_percent} /></label>
+              <label>Vyplatit %<input class="band-payout" type="number" min="0" max="100" .value=${band.payout_percent} /></label>
+              <button class="btn danger small-btn" @click=${() => this._deletePayoutBand(index)} ?disabled=${band.minimum_percent === 0 || band.minimum_percent === 100}>Odebrat</button>
+            </div>`)}
+        </div>
+        <button class="btn" @click=${this._savePeriodicSettings} ?disabled=${this._saving}>Uložit periodické cíle</button>
+      </section>
+    `;
+  }
+
+  async _addPayoutBand() {
+    const current = this._periodicConfigFromForm();
+    const used = new Set(current.payout_bands.map((band) => Number(band.minimum_percent)));
+    const minimum = [25, 10, 20, 30, 40, 60, 80, 90].find((value) => !used.has(value));
+    if (minimum === undefined) return this._showToast("Nejprve upravte nebo odeberte některé pásmo.", true);
+    const data = this._cloneData();
+    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
+    profile.periodic_config = current;
+    profile.periodic_config.payout_bands.push({ minimum_percent: minimum, payout_percent: minimum });
+    profile.periodic_config.payout_bands.sort((a, b) => a.minimum_percent - b.minimum_percent);
+    this.appData = data;
+  }
+
+  _deletePayoutBand(index) {
+    const data = this._cloneData();
+    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
+    profile.periodic_config = this._periodicConfigFromForm();
+    profile.periodic_config.payout_bands.splice(index, 1);
+    this.appData = data;
+  }
+
+  _periodicConfigFromForm() {
+    const root = this.shadowRoot;
+    const integer = (selector) => Number(root.querySelector(selector)?.value);
+    const bands = [...root.querySelectorAll(".band-row")].map((row) => ({
+      minimum_percent: Number(row.querySelector(".band-min").value),
+      payout_percent: Number(row.querySelector(".band-payout").value),
+    }));
+    return {
+      daily_target: integer("#periodic-daily-target"), base_digital_minutes: integer("#periodic-base-minutes"),
+      bonus_step_points: integer("#periodic-step-points"), bonus_step_minutes: integer("#periodic-step-minutes"),
+      max_digital_minutes: integer("#periodic-max-minutes"), weekly_target: integer("#periodic-weekly-target"),
+      weekly_tick_weekday: integer("#periodic-weekday"), weekly_tick_time: root.querySelector("#periodic-week-time").value,
+      weekly_reward: { enabled: root.querySelector("#periodic-reward-enabled").checked,
+        label: root.querySelector("#periodic-reward-label").value.trim(),
+        description: root.querySelector("#periodic-reward-description").value.trim() },
+      monthly_target: integer("#periodic-monthly-target"), allowance_at_100: integer("#periodic-allowance"),
+      payout_bands: bands, max_payout_percent: integer("#periodic-max-payout"),
+    };
+  }
+
+  async _savePeriodicSettings() {
+    const data = this._cloneData();
+    const profile = data.profiles.find((item) => item.id === this.activeProfileId);
+    profile.periodic_config = this._periodicConfigFromForm();
+    this.appData = data;
+    await this._saveConfig("Periodické cíle byly uloženy");
   }
 
   _renderProfileEditor(profile) {
@@ -885,7 +1032,7 @@ class BodikPanel extends LitElement {
     if (!this._canManage || !this.profiles.length) return;
     const backup = {
       format: "bodik-backup",
-      format_version: 1,
+      format_version: 2,
       bodik_version: VERSION,
       exported_at: new Date().toISOString(),
       data: {
@@ -969,6 +1116,9 @@ class BodikPanel extends LitElement {
 }
 
 if (!customElements.get("bodik-panel")) customElements.define("bodik-panel", BodikPanel);
+if (!customElements.get("bodik-panel-v9")) {
+  customElements.define("bodik-panel-v9", class BodikPanelV9Alias extends BodikPanel {});
+}
 if (!customElements.get("bodik-panel-v8")) {
   customElements.define("bodik-panel-v8", class BodikPanelV8Alias extends BodikPanel {});
 }

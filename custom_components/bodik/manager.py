@@ -21,7 +21,7 @@ from homeassistant.core import (
     callback,
     valid_entity_id,
 )
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_point_in_time, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -30,11 +30,23 @@ from .const import (
     LEGACY_RELATIVE_PATH,
     MAX_ABS_SCORE,
     MAX_HISTORY,
+    MAX_PERIOD_RESULTS,
     MAX_PROFILES,
     MAX_REASONS,
     MAX_REWARDS,
     STORAGE_KEY,
     STORAGE_VERSION,
+)
+from .periodic import (
+    PeriodicValidationError,
+    close_periods,
+    current_status,
+    default_config,
+    iso_utc,
+    new_state,
+    next_boundary,
+    parse_utc,
+    validate_config,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,6 +93,7 @@ class BodikManager:
         self.data: dict[str, Any] = {}
         self._lock = asyncio.Lock()
         self._unsubscribe_entities = None
+        self._unsubscribe_periodic = None
         self._internal_context_order: deque[str] = deque(maxlen=100)
         self._internal_context_ids: set[str] = set()
 
@@ -95,8 +108,10 @@ class BodikManager:
             self.data = await self._async_migrate_legacy_data()
             migrated = True
 
+        await self.async_close_elapsed_periods()
         await self.store.async_save(self.data)
         self._register_entity_listener()
+        self._schedule_periodic_tick()
         await self._async_sync_all_mirrors()
 
         if migrated:
@@ -120,6 +135,7 @@ class BodikManager:
             seen_ids.add(profile["id"])
 
         return {
+            "data_version": 2,
             "revision": max(1, _integer(stored.get("revision"), 1)),
             "profiles": profiles,
             "admin_user_ids": [
@@ -185,6 +201,8 @@ class BodikManager:
                             history_score,
                             live_score,
                             "Home Assistant",
+                            "migration_sync",
+                            False,
                         )
                     )
                     profile["history"] = profile["history"][-MAX_HISTORY:]
@@ -193,6 +211,7 @@ class BodikManager:
             profiles.append(profile)
 
         return {
+            "data_version": 2,
             "revision": 1,
             "profiles": profiles,
             "admin_user_ids": admin_user_ids,
@@ -277,12 +296,23 @@ class BodikManager:
                     }
                 )
 
+        try:
+            periodic_config = validate_config(raw.get("periodic_config"))
+        except PeriodicValidationError as err:
+            raise BodikValidationError(str(err)) from err
+
         if existing is not None:
             score = _integer(existing.get("score"))
             history = deepcopy(existing.get("history", []))[-MAX_HISTORY:]
+            periodic = self._sanitize_periodic_state(
+                existing.get("periodic"), periodic_config
+            )
         else:
             history = self._sanitize_history(raw.get("history", []))
             score = _integer(raw.get("score"), history[-1]["next"] if history else 0)
+            periodic = self._sanitize_periodic_state(
+                raw.get("periodic"), periodic_config
+            )
 
         return {
             "id": profile_id,
@@ -295,7 +325,70 @@ class BodikManager:
             "rewards": rewards,
             "history": history,
             "score": score,
+            "periodic_config": periodic_config,
+            "periodic": periodic,
         }
+
+    def _time_zone(self):
+        """Return Home Assistant's configured local timezone."""
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(self.hass.config.time_zone)
+
+    def _sanitize_periodic_state(
+        self, raw: Any, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Normalize v9 state or explicitly activate tracking for v8 data."""
+        zone = self._time_zone()
+        now = datetime.now(timezone.utc)
+        if not isinstance(raw, dict) or not raw.get("tracking_started_at"):
+            return new_state(now, config, zone)
+        try:
+            tracking = parse_utc(str(raw["tracking_started_at"]))
+            result = new_state(tracking, config, zone)
+            result["tracking_started_at"] = iso_utc(tracking)
+            for key in (
+                "daily_period_started_at",
+                "weekly_period_started_at",
+                "monthly_period_started_at",
+            ):
+                result[key] = iso_utc(parse_utc(str(raw.get(key, result[key]))))
+            for key in (
+                "daily_initial_partial",
+                "weekly_initial_partial",
+                "monthly_initial_partial",
+            ):
+                result[key] = bool(raw.get(key, result[key]))
+            transactions = raw.get("transactions", [])
+            result["transactions"] = []
+            if isinstance(transactions, list):
+                for item in transactions:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        when = iso_utc(parse_utc(str(item.get("time"))))
+                    except (TypeError, ValueError):
+                        continue
+                    result["transactions"].append(
+                        {
+                            "id": _text(item.get("id"), 64, uuid4().hex),
+                            "time": when,
+                            "delta": _integer(item.get("delta")),
+                            "kind": _text(item.get("kind"), 40, "adjust_score"),
+                            "counts_toward_periods": bool(item.get("counts_toward_periods", False)),
+                        }
+                    )
+            for key in ("daily_results", "weekly_results", "monthly_results"):
+                values = raw.get(key, [])
+                result[key] = deepcopy(values[-MAX_PERIOD_RESULTS:]) if isinstance(values, list) else []
+            result["today_digital_entitlement"] = max(
+                0, _integer(raw.get("today_digital_entitlement"), 0)
+            )
+            reward = raw.get("active_weekly_reward")
+            result["active_weekly_reward"] = deepcopy(reward) if isinstance(reward, dict) else None
+            return result
+        except (TypeError, ValueError, KeyError) as err:
+            raise BodikValidationError("Uložený stav periodických cílů je neplatný.") from err
 
     def _sanitize_history(self, raw_history: Any) -> list[dict[str, Any]]:
         """Validate legacy history records."""
@@ -315,12 +408,15 @@ class BodikManager:
                     "prev": previous,
                     "next": following,
                     "user": _text(item.get("user"), 120, "Neznámý"),
+                    "kind": _text(item.get("kind"), 40, "legacy"),
+                    "counts_toward_periods": bool(item.get("counts_toward_periods", False)),
                 }
             )
         return result
 
     def _history_entry(
-        self, reason: str, delta: int, previous: int, following: int, user: str
+        self, reason: str, delta: int, previous: int, following: int, user: str,
+        kind: str = "adjust_score", counts_toward_periods: bool = True,
     ) -> dict[str, Any]:
         return {
             "time": _now_iso(),
@@ -329,6 +425,8 @@ class BodikManager:
             "prev": previous,
             "next": following,
             "user": _text(user, 120, "Home Assistant"),
+            "kind": _text(kind, 40, "adjust_score"),
+            "counts_toward_periods": counts_toward_periods,
         }
 
     def _profile(self, identifier: str) -> dict[str, Any]:
@@ -357,8 +455,15 @@ class BodikManager:
 
     async def async_payload(self, user_id: str | None) -> dict[str, Any]:
         """Return authenticated client data."""
+        await self.async_close_elapsed_periods()
         can_manage = await self.async_can_manage(user_id)
         client_data = deepcopy(self.data)
+        now = datetime.now(timezone.utc)
+        zone = self._time_zone()
+        for profile in client_data.get("profiles", []):
+            profile["periodic_status"] = current_status(
+                profile["periodic"], profile["periodic_config"], now, zone
+            )
         if not can_manage:
             client_data["admin_user_ids"] = []
         payload: dict[str, Any] = {
@@ -439,6 +544,7 @@ class BodikManager:
         """Save validated profile config with optimistic concurrency control."""
         if not await self.async_can_manage(user_id):
             raise PermissionError("Uživatel nemá oprávnění spravovat Bodík.")
+        await self.async_close_elapsed_periods()
 
         async with self._lock:
             if expected_revision != self.data["revision"]:
@@ -450,11 +556,25 @@ class BodikManager:
             profiles = self._sanitize_profile_collection(
                 raw.get("profiles", []), existing_by_id
             )
+            now = datetime.now(timezone.utc)
+            for profile in profiles:
+                existing = existing_by_id.get(profile["id"])
+                if not existing:
+                    continue
+                old_config = existing.get("periodic_config", default_config())
+                new_config = profile["periodic_config"]
+                if (
+                    old_config.get("weekly_tick_weekday") != new_config["weekly_tick_weekday"]
+                    or old_config.get("weekly_tick_time") != new_config["weekly_tick_time"]
+                ):
+                    profile["periodic"]["weekly_period_started_at"] = iso_utc(now)
+                    profile["periodic"]["weekly_initial_partial"] = True
             admin_user_ids = await self._valid_manager_user_ids(
                 raw.get("admin_user_ids", [])
             )
 
             self.data = {
+                "data_version": 2,
                 "revision": self.data["revision"] + 1,
                 "profiles": profiles,
                 "admin_user_ids": admin_user_ids,
@@ -463,6 +583,8 @@ class BodikManager:
             await self.store.async_save(self.data)
 
         self._register_entity_listener()
+        await self.async_close_elapsed_periods()
+        self._schedule_periodic_tick()
         await self._async_sync_all_mirrors()
         self._fire_updated("config")
         return deepcopy(self.data)
@@ -475,7 +597,7 @@ class BodikManager:
             raise PermissionError("Uživatel nemá oprávnění spravovat Bodík.")
 
         if raw_backup.get("format") == "bodik-backup":
-            if raw_backup.get("format_version") != 1:
+            if raw_backup.get("format_version") not in {1, 2}:
                 raise BodikValidationError("Nepodporovaná verze zálohy Bodíku.")
             raw_data = raw_backup.get("data")
         elif "profiles" in raw_backup:
@@ -497,6 +619,7 @@ class BodikManager:
                 raw_data.get("admin_user_ids", [])
             )
             self.data = {
+                "data_version": 2,
                 "revision": self.data["revision"] + 1,
                 "profiles": profiles,
                 "admin_user_ids": admin_user_ids,
@@ -505,6 +628,8 @@ class BodikManager:
             await self.store.async_save(self.data)
 
         self._register_entity_listener()
+        await self.async_close_elapsed_periods()
+        self._schedule_periodic_tick()
         await self._async_sync_all_mirrors()
         self._fire_updated("import")
         return deepcopy(self.data)
@@ -518,7 +643,8 @@ class BodikManager:
             previous = _integer(profile["score"])
             following = self._clamp_for_entity(profile, previous + _integer(delta))
             result = await self._async_commit_score_locked(
-                profile, previous, following, reason, user
+                profile, previous, following, reason, user,
+                kind="adjust_score", counts_toward_periods=True,
             )
 
         if result["changed"]:
@@ -535,7 +661,8 @@ class BodikManager:
             previous = _integer(profile["score"])
             following = self._clamp_for_entity(profile, _integer(value))
             result = await self._async_commit_score_locked(
-                profile, previous, following, reason, user
+                profile, previous, following, reason, user,
+                kind="set_score", counts_toward_periods=False,
             )
 
         if result["changed"]:
@@ -550,16 +677,29 @@ class BodikManager:
         following: int,
         reason: str,
         user: str,
+        kind: str,
+        counts_toward_periods: bool,
     ) -> dict[str, Any]:
         """Persist one score mutation while the caller holds ``self._lock``."""
         if following == previous:
             return {"changed": False, "profile": deepcopy(profile)}
 
         profile["score"] = following
-        profile["history"].append(
-            self._history_entry(reason, following - previous, previous, following, user)
+        entry = self._history_entry(
+            reason, following - previous, previous, following, user,
+            kind, counts_toward_periods,
         )
+        profile["history"].append(entry)
         profile["history"] = profile["history"][-MAX_HISTORY:]
+        profile["periodic"]["transactions"].append(
+            {
+                "id": uuid4().hex,
+                "time": entry["time"],
+                "delta": entry["delta"],
+                "kind": kind,
+                "counts_toward_periods": counts_toward_periods,
+            }
+        )
         self.data["revision"] += 1
         self.data["updated_at"] = _now_iso()
         await self.store.async_save(self.data)
@@ -666,6 +806,50 @@ class BodikManager:
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Bodík: externí změnu %s nelze uložit", state.entity_id)
 
+    async def async_close_elapsed_periods(self, now: datetime | None = None) -> bool:
+        """Catch up every elapsed boundary once, including after HA downtime."""
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        changed_profiles: list[str] = []
+        async with self._lock:
+            for profile in self.data.get("profiles", []):
+                if close_periods(
+                    profile["periodic"], profile["periodic_config"], now, self._time_zone()
+                ):
+                    for key in ("daily_results", "weekly_results", "monthly_results"):
+                        profile["periodic"][key] = profile["periodic"][key][
+                            -MAX_PERIOD_RESULTS:
+                        ]
+                    changed_profiles.append(profile["id"])
+            if changed_profiles:
+                self.data["revision"] += 1
+                self.data["updated_at"] = _now_iso()
+                await self.store.async_save(self.data)
+        if changed_profiles:
+            self._fire_updated("periodic_close")
+        return bool(changed_profiles)
+
+    def _schedule_periodic_tick(self) -> None:
+        """Register one HA-local, DST-safe timer for the nearest boundary."""
+        if self._unsubscribe_periodic:
+            self._unsubscribe_periodic()
+            self._unsubscribe_periodic = None
+        candidates = [
+            next_boundary(profile["periodic"], profile["periodic_config"], self._time_zone())
+            for profile in self.data.get("profiles", [])
+        ]
+        if not candidates:
+            return
+
+        async def handle_tick(_now: datetime) -> None:
+            try:
+                await self.async_close_elapsed_periods(_now)
+            finally:
+                self._schedule_periodic_tick()
+
+        self._unsubscribe_periodic = async_track_point_in_time(
+            self.hass, handle_tick, min(candidates)
+        )
+
     def _fire_updated(self, change: str, profile_id: str | None = None) -> None:
         self.hass.bus.async_fire(
             EVENT_UPDATED,
@@ -683,8 +867,17 @@ class BodikManager:
         return user.name if user and user.name else "Home Assistant"
 
     def scores_response(self) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        zone = self._time_zone()
         profiles = [
-            {"id": item["id"], "name": item["name"], "score": item["score"]}
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "score": item["score"],
+                "periodic": current_status(
+                    item["periodic"], item["periodic_config"], now, zone
+                ),
+            }
             for item in self.data["profiles"]
         ]
         summary = "Aktuální stav: " + ". ".join(
@@ -694,7 +887,12 @@ class BodikManager:
 
     def info_response(self) -> dict[str, Any]:
         sections: list[str] = []
+        now = datetime.now(timezone.utc)
+        zone = self._time_zone()
         for profile in self.data["profiles"]:
+            periodic = current_status(
+                profile["periodic"], profile["periodic_config"], now, zone
+            )
             reasons = "\n".join(
                 f"- {item['name']}: {item['value']:+d}" for item in profile["reasons"]
             ) or "- Nejsou nastaveny"
@@ -705,6 +903,10 @@ class BodikManager:
             sections.append(
                 f"PROFIL: {profile['name']}\n"
                 f"BODY: {profile['score']}\n"
+                f"DNES: {periodic['daily']['points']} / {periodic['daily']['target']}\n"
+                f"TENTO TÝDEN: {periodic['weekly']['points']} / {periodic['weekly']['target']}\n"
+                f"TENTO MĚSÍC: {periodic['monthly']['points']} / {periodic['monthly']['target']}\n"
+                f"DNEŠNÍ DIGITÁLNÍ ČAS: {periodic['daily']['today_entitlement']} minut\n"
                 f"PRAVIDLA: {profile['rules'] or 'Nejsou definována'}\n"
                 f"DŮVODY:\n{reasons}\n"
                 f"ODMĚNY:\n{rewards}"

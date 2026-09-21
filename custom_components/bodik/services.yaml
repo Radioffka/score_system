@@ -65,3 +65,8 @@ read_scores:
   name: Přečíst body
   description: Vrátí aktuální bodový stav všech profilů.
   fields: {}
+
+read_periodic:
+  name: Přečíst periodické cíle
+  description: Vrátí denní, týdenní a měsíční postup, aktivní nároky a předchozí výsledky všech profilů.
+  fields: {}

@@ -15,6 +15,9 @@ repozitář obsahuje pouze zdrojový kód integrace.
 - více samostatných profilů;
 - přidávání, odebírání a přesné nastavení bodů;
 - konfigurovatelné důvody a odměny;
+- samostatné denní, týdenní a měsíční cíle pro každý profil;
+- výpočet sdíleného digitálního času na následující den;
+- konfigurovatelná týdenní odměna a měsíční kapesné;
 - historie změn s exportem do XLSX;
 - kompletní záloha a obnova nastavení i historie ve formátu JSON;
 - oprávnění pro vybrané uživatele Home Assistantu;
@@ -81,9 +84,10 @@ Vývojový postup:
 
 1. upravit soubory v `custom_components/bodik/`;
 2. zvýšit stejnou verzi v `manifest.json`, `const.py` a `bodik-panel.js`;
-3. commitnout a pushnout změny do `main`;
-4. GitHub Actions ověří HACS i hassfest a vytvoří chybějící release;
-5. HACS nabídne novou verzi v Home Assistantu.
+3. pracovat na samostatné větvi a otevřít pull request do `main`;
+4. GitHub Actions spustí jednotkové testy a ověří HACS i hassfest;
+5. po schválení a sloučení do `main` workflow vytvoří chybějící release;
+6. HACS nabídne novou verzi v Home Assistantu.
 
 ## Dostupné služby
 
@@ -91,9 +95,30 @@ Vývojový postup:
 - `bodik.set_score` – nastaví přesný počet bodů;
 - `bodik.get_info` – vrátí provozní informace;
 - `bodik.read_scores` – vrátí aktuální stav profilů.
+- `bodik.read_periodic` – vrátí aktuální periodický postup, nároky a uzavřené výsledky.
 
 Zápisové služby respektují oprávnění správce Bodíku. Systémové automatizace
 bez uživatelského kontextu zůstávají podporované.
+
+## Datový model v9 a migrace
+
+Dlouhodobé `score`, historie a vlastní odměny zůstávají zachované. Bodík v9 ke
+každému profilu přidává `periodic_config` a `periodic`. Periodická část obsahuje
+čas zahájení sledování, explicitně způsobilé transakce, kurzory rozehraných
+období, neměnné uzavřené snapshoty, dnešní digitální nárok a aktivní týdenní
+odměnu. Výpočty používají lokální časovou zónu Home Assistantu.
+
+Při prvním spuštění nad daty v8 se uloží aktuální čas jako
+`periodic_tracking_started_at`. Starší historie se zpětně nepřepočítává a první
+neúplný den, týden a měsíc jsou označeny jako částečné a jejich výsledek se
+nepoužije jako sankce. Výchozí dopady jsou záměrně neutrální (0 minut,
+vypnutá týdenní odměna a 0 Kč), dokud správce nenastaví rodinné hodnoty.
+`adjust_score` se do periodického výkonu započítá;
+administrativní `set_score`, reset a technická synchronizace nikoliv.
+
+Záloha formátu v2 obsahuje konfiguraci i celý nutný stav period. Import nadále
+přijímá v8 zálohy formátu v1 a zahájí pro ně nové periodické sledování bez
+výroby historických bodů.
 
 ## Bezpečnost a data
 
