@@ -962,6 +962,90 @@ textarea::placeholder {
   grid-template-columns: repeat(2, minmax(120px, 1fr));
 }
 
+/* Reason cards in Settings > Důvody: elevated shell, stable grid layout */
+.manage-item {
+  border: 1px solid color-mix(in srgb, var(--bodik-border) 72%, var(--bodik-text));
+  border-radius: 13px;
+  background: var(--bodik-card);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+  padding: 12px 14px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.manage-item:hover {
+  border-color: color-mix(in srgb, var(--bodik-primary) 45%, var(--bodik-border));
+  box-shadow: 0 2px 6px rgb(0 0 0 / 10%);
+}
+
+.manage-item:not(.editing) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "text pill actions";
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.manage-item:not(.editing) > span {
+  grid-area: text;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.manage-item:not(.editing) > span strong {
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.manage-item:not(.editing) small {
+  font-size: 0.78rem;
+}
+
+.manage-item:not(.editing) > strong {
+  grid-area: pill;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 30px;
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.manage-item:not(.editing) > strong.positive {
+  color: var(--bodik-success);
+  background: color-mix(in srgb, var(--bodik-success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--bodik-success) 32%, transparent);
+}
+
+.manage-item:not(.editing) > strong.negative {
+  color: var(--bodik-danger);
+  background: color-mix(in srgb, var(--bodik-danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--bodik-danger) 32%, transparent);
+}
+
+.manage-item:not(.editing) > strong.neutral {
+  color: var(--bodik-muted);
+  background: color-mix(in srgb, var(--bodik-surface) 55%, transparent);
+  border-color: var(--bodik-border);
+}
+
+.manage-item:not(.editing) .item-actions {
+  grid-area: actions;
+  justify-self: end;
+  flex-wrap: nowrap;
+}
+
 .reward-form {
   display: grid;
   grid-template-columns: 2fr repeat(4, minmax(100px, 1fr)) auto;
