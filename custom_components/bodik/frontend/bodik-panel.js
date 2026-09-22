@@ -555,76 +555,102 @@ class BodikPanel extends LitElement {
 
   _renderSettings() {
     return html`
-      <section class="card">
-        <h2>Oprávnění rodičů</h2>
-        <p class="note">Administrátoři Home Assistantu mají přístup vždy. Zde lze přidat další aktivní uživatele podle jejich stabilního HA ID.</p>
-        <div class="user-list">
-          ${this._availableUsers.map((user) => {
-            const granted = user.is_admin || (this.appData.admin_user_ids || []).includes(user.id);
-            return html`
-              <label class="user-row">
-                <input type="checkbox" data-user-id=${user.id} .checked=${granted} ?disabled=${user.is_admin || this._saving} @change=${this._toggleManagerUser} />
-                <span>${user.name}</span>
-                ${user.is_admin ? html`<span class="badge">HA administrátor</span>` : ""}
-              </label>
-            `;
-          })}
+      <details class="card settings-section" open>
+        <summary class="settings-section-header">
+          <h2>Oprávnění rodičů</h2>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="settings-section-body">
+          <p class="note">Administrátoři Home Assistantu mají přístup vždy. Zde lze přidat další aktivní uživatele podle jejich stabilního HA ID.</p>
+          <div class="user-list">
+            ${this._availableUsers.map((user) => {
+              const granted = user.is_admin || (this.appData.admin_user_ids || []).includes(user.id);
+              return html`
+                <label class="user-row">
+                  <input type="checkbox" data-user-id=${user.id} .checked=${granted} ?disabled=${user.is_admin || this._saving} @change=${this._toggleManagerUser} />
+                  <span>${user.name}</span>
+                  ${user.is_admin ? html`<span class="badge">HA administrátor</span>` : ""}
+                </label>
+              `;
+            })}
+          </div>
         </div>
-      </section>
+      </details>
 
-      <section class="card">
-        <div class="section-head"><h2>Profily</h2><button class="btn" @click=${this._addProfile} ?disabled=${this._saving}>Přidat profil</button></div>
-        <div class="profile-manager">
-          ${this.profiles.map((profile) => this._renderProfileEditor(profile))}
+      <details class="card settings-section" open>
+        <summary class="settings-section-header">
+          <h2>Profily</h2>
+          <button class="btn" @click=${(e) => { e.preventDefault(); this._addProfile(); }} ?disabled=${this._saving}>Přidat profil</button>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="settings-section-body">
+          <div class="profile-manager">
+            ${this.profiles.map((profile) => this._renderProfileEditor(profile))}
+          </div>
         </div>
-      </section>
+      </details>
 
-      <section class="card">
-        <h2>Další rodinná pravidla · ${this.activeProfile.name}</h2>
-        <p class="note">Volitelné poznámky doplňují automaticky generovaná aktuální pravidla.</p>
-        <label for="rules-input">Text dalších pravidel</label>
-        <textarea id="rules-input" class="rules-editor" maxlength="5000" .value=${this.activeProfile.rules || ""}></textarea>
-        <button class="btn" @click=${this._saveRules} ?disabled=${this._saving}>Uložit pravidla</button>
-      </section>
+      <details class="card settings-section" open>
+        <summary class="settings-section-header">
+          <h2>Další rodinná pravidla · ${this.activeProfile.name}</h2>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="settings-section-body">
+          <p class="note">Volitelné poznámky doplňují automaticky generovaná aktuální pravidla.</p>
+          <label for="rules-input">Text dalších pravidel</label>
+          <textarea id="rules-input" class="rules-editor" maxlength="5000" .value=${this.activeProfile.rules || ""}></textarea>
+          <button class="btn" @click=${this._saveRules} ?disabled=${this._saving}>Uložit pravidla</button>
+        </div>
+      </details>
 
       ${this._renderReasonSettings()}
       ${this._renderPeriodicSettings()}
 
-      <section class="card">
-        <h2>Záloha a obnova</h2>
-        <p class="note">
-          Kompletní JSON záloha obsahuje profily, skóre, pravidla, důvody, kategorie,
-          oprávnění a historii. Soubory fotografií ani definice pomocníků
-          <code>input_number</code> součástí zálohy nejsou.
-        </p>
-        <div class="backup-actions">
-          <button class="btn" @click=${this._downloadBackup} ?disabled=${this._saving || !this.profiles.length}>
-            Exportovat zálohu
-          </button>
-          <label class="btn ghost backup-file-button ${this._saving ? "disabled" : ""}">
-            Importovat zálohu
-            <input
-              type="file"
-              accept=".json,application/json"
-              @change=${this._importBackup}
-              ?disabled=${this._saving}
-            />
-          </label>
+      <details class="card settings-section" open>
+        <summary class="settings-section-header">
+          <h2>Záloha a obnova</h2>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="settings-section-body">
+          <p class="note">
+            Kompletní JSON záloha obsahuje profily, skóre, pravidla, důvody, kategorie,
+            oprávnění a historii. Soubory fotografií ani definice pomocníků
+            <code>input_number</code> součástí zálohy nejsou.
+          </p>
+          <div class="backup-actions">
+            <button class="btn" @click=${this._downloadBackup} ?disabled=${this._saving || !this.profiles.length}>
+              Exportovat zálohu
+            </button>
+            <label class="btn ghost backup-file-button ${this._saving ? "disabled" : ""}">
+              Importovat zálohu
+              <input
+                type="file"
+                accept=".json,application/json"
+                @change=${this._importBackup}
+                ?disabled=${this._saving}
+              />
+            </label>
+          </div>
+          <p class="note small">Import nahradí všechna současná nastavení, skóre a historii obsahem vybrané zálohy.</p>
         </div>
-        <p class="note small">Import nahradí všechna současná nastavení, skóre a historii obsahem vybrané zálohy.</p>
-      </section>
+      </details>
 
-      <section class="card">
-        <h2>Diagnostika</h2>
-        <div class="diagnostics">
-          <div><span>Backend</span><strong>Připojen</strong></div>
-          <div><span>Revize dat</span><strong>${this._revision}</strong></div>
-          <div><span>Profily</span><strong>${this.profiles.length}</strong></div>
-          <div><span>Zrcadlo skóre</span><strong>${this.activeProfile.scoreEntity || "nenastaveno"}</strong></div>
-          <div><span>Historie</span><strong>${this.history.length} záznamů</strong></div>
+      <details class="card settings-section" open>
+        <summary class="settings-section-header">
+          <h2>Diagnostika</h2>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="settings-section-body">
+          <div class="diagnostics">
+            <div><span>Backend</span><strong>Připojen</strong></div>
+            <div><span>Revize dat</span><strong>${this._revision}</strong></div>
+            <div><span>Profily</span><strong>${this.profiles.length}</strong></div>
+            <div><span>Zrcadlo skóre</span><strong>${this.activeProfile.scoreEntity || "nenastaveno"}</strong></div>
+            <div><span>Historie</span><strong>${this.history.length} záznamů</strong></div>
+          </div>
+          <button class="btn ghost" @click=${() => this._loadAllData()}>Otestovat spojení</button>
         </div>
-        <button class="btn ghost" @click=${() => this._loadAllData()}>Otestovat spojení</button>
-      </section>
+      </details>
     `;
   }
 
@@ -633,8 +659,12 @@ class BodikPanel extends LitElement {
     const reward = cfg.weekly_reward || {};
     const bands = cfg.payout_bands || [];
     return html`
-      <section class="card periodic-settings">
-        <h2>Periodické cíle · ${this.activeProfile.name}</h2>
+      <details class="card settings-section periodic-settings" open>
+        <summary class="settings-section-header">
+          <h2>Periodické cíle · ${this.activeProfile.name}</h2>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="settings-section-body">
         <p class="note">Každý profil má vlastní nastavení. Změna dne nebo času týdenní uzávěry bezpečně zahájí nové částečné období.</p>
         <h3>Denní cíl a digitální čas</h3>
         <div class="settings-grid">
@@ -669,7 +699,8 @@ class BodikPanel extends LitElement {
             </div>`)}
         </div>
         <button class="btn" @click=${this._savePeriodicSettings} ?disabled=${this._saving}>Uložit periodické cíle</button>
-      </section>
+        </div>
+      </details>
     `;
   }
 
@@ -761,8 +792,12 @@ class BodikPanel extends LitElement {
       },
     ];
     return html`
-      <section class="card">
-        <h2>Důvody · ${this.activeProfile.name}</h2>
+      <details class="card settings-section" open>
+        <summary class="settings-section-header">
+          <h2>Důvody · ${this.activeProfile.name}</h2>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="settings-section-body">
         <div class="offline-cap-row">
           <label>Denní strop kladných Offline bodů<input id="offline-daily-cap" type="number" min="1" step="1" .value=${this.activeProfile.offline_daily_cap ?? ""} placeholder="Bez stropu" /></label>
           <button class="btn ghost" @click=${this._saveOfflineCap} ?disabled=${this._saving}>Uložit Offline strop</button>
@@ -804,7 +839,8 @@ class BodikPanel extends LitElement {
               </div>
             </details>`)}
         </div>
-      </section>
+        </div>
+      </details>
     `;
   }
 

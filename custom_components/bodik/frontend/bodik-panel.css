@@ -303,6 +303,62 @@ h2 {
   box-shadow: var(--bodik-shadow);
 }
 
+.settings-section {
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px clamp(14px, 2vw, 20px);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: background-color 160ms ease;
+}
+
+.settings-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-section > summary::marker {
+  content: "";
+}
+
+.settings-section > summary:hover {
+  background: color-mix(in srgb, var(--bodik-primary) 6%, transparent);
+}
+
+.settings-section > summary:focus-visible {
+  outline: 2px solid var(--bodik-primary);
+  outline-offset: -2px;
+}
+
+.settings-section > summary h2 {
+  margin: 0;
+  flex: 1;
+}
+
+.chevron {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-right: 2px solid var(--bodik-muted);
+  border-bottom: 2px solid var(--bodik-muted);
+  transform: rotate(45deg);
+  transition: transform 200ms ease;
+}
+
+.settings-section[open] > summary .chevron {
+  transform: rotate(-135deg);
+}
+
+.settings-section-body {
+  padding: 0 clamp(14px, 2vw, 20px) clamp(14px, 2vw, 20px);
+}
+
 .state-card {
   display: grid;
   min-height: 220px;
