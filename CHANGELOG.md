@@ -1,5 +1,11 @@
 # Přehled změn
 
+## 9.2.0
+
+- všechny horní sekce v Nastaveních (Oprávnění rodičů, Profily, Další rodinná pravidla,
+  Důvody, Periodické cíle, Záloha a obnova, Diagnostika) jsou samostatně skládatelné
+  pomocí nativních prvků `<details>/<summary>` s moderním šipkovým indikátorem.
+
 ## 9.1.1
 
 - všechny frontendové assety používají automaticky verzovaný adresář odvozený

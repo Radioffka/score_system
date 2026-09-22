@@ -1,4 +1,4 @@
-# Bodík v9.1.1
+# Bodík v9.2.0
 
 Bodík je lokální rodinný bodovací systém integrovaný přímo do Home Assistantu.
 Obsahuje profily dětí, důvody bodových změn, periodické nároky a historii.
