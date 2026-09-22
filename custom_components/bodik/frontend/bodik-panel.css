@@ -1312,6 +1312,24 @@ footer {
   }
 }
 
+/* Mobile: stack non-editing reason cards to avoid horizontal pressure */
+@media (max-width: 520px) {
+  .manage-item:not(.editing) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "text  text"
+      "pill  actions";
+  }
+
+  .manage-item:not(.editing) > strong {
+    justify-self: start;
+  }
+
+  .manage-item:not(.editing) .item-actions {
+    justify-self: end;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
