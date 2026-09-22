@@ -1,5 +1,11 @@
 # Přehled změn
 
+## 9.2.2
+
+- přepracované karty důvodů v Nastavení s výraznějším oddělením, stabilním rozvržením a modernějším vzhledem;
+- kladné, záporné a nulové bodové hodnoty mají přehledné stavové štítky;
+- úzké obrazovky používají kompaktní dvouřádkové rozložení bez horizontálního přetečení.
+
 ## 9.2.1
 
 - jednorázová migrace existujících rodinných profilů na cíle 20 / 120 / 520
