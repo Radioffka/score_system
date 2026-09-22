@@ -1,5 +1,16 @@
 # Přehled změn
 
+## 9.2.1
+
+- jednorázová migrace existujících rodinných profilů na cíle 20 / 120 / 520
+  bez změny získaných bodů a uzavřených periodických výsledků;
+- denní digitální čas a výplatní pásma zachovávají původní výpočty;
+- přehled upřednostňuje průběžný výkon a nároky před dlouhodobým skóre;
+- administrativní nastavení a vynulování dlouhodobého skóre mají samostatnou,
+  jednoznačně označenou sekci v Nastaveních;
+- nulový odhad kapesného a generovaná pravidla ukazují první skutečně
+  vyplácející hranici podle konfigurace profilu.
+
 ## 9.2.0
 
 - všechny horní sekce v Nastaveních (Oprávnění rodičů, Profily, Další rodinná pravidla,

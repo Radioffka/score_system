@@ -126,6 +126,15 @@ class PeriodicEngineTest(unittest.TestCase):
             with self.subTest(points=points):
                 self.assertEqual(minutes, periodic.digital_entitlement(points, self.config))
 
+    def test_recalibrated_family_entitlement_mapping(self) -> None:
+        config = deepcopy(self.config)
+        config["daily_target"] = 20
+        expected = {19: 0, 20: 120, 24: 120, 25: 135, 29: 135,
+                    30: 150, 34: 150, 35: 165, 39: 165, 40: 180, 100: 180}
+        for points, minutes in expected.items():
+            with self.subTest(points=points):
+                self.assertEqual(minutes, periodic.digital_entitlement(points, config))
+
     def test_weekly_reward_is_from_previous_closed_week(self) -> None:
         config = deepcopy(self.config)
         config["weekly_target"] = 10
@@ -171,6 +180,43 @@ class PeriodicEngineTest(unittest.TestCase):
                 result = periodic.allowance(points, self.config)
                 self.assertEqual(percent, result["payout_percent"])
                 self.assertEqual(amount, result["amount"])
+
+    def test_monthly_520_payout_boundaries_and_live_threshold(self) -> None:
+        config = deepcopy(self.config)
+        config["monthly_target"] = 520
+        expected = {259: 0, 260: 80, 363: 80, 364: 140, 441: 140,
+                    442: 180, 519: 180, 520: 200, 778: 299, 780: 300, 800: 300}
+        for points, amount in expected.items():
+            with self.subTest(points=points):
+                self.assertEqual(amount, periodic.allowance(points, config)["amount"])
+        self.assertEqual({"minimum_percent": 50, "points": 260},
+                         periodic.first_paying_threshold(config))
+
+        state = periodic.new_state(moment("2026-09-10T10:00:00+00:00"), config, PRAGUE)
+        self.transaction(state, "2026-09-10T11:00:00+00:00", 96)
+        monthly = periodic.current_status(
+            state, config, moment("2026-09-10T12:00:00+00:00"), PRAGUE
+        )["monthly"]
+        self.assertEqual(0, monthly["estimated_allowance"]["amount"])
+        self.assertEqual({"minimum_percent": 50, "points": 260, "points_remaining": 164},
+                         monthly["first_paying_threshold"])
+
+    def test_first_payout_uses_configured_bands_and_target(self) -> None:
+        config = deepcopy(self.config)
+        config["monthly_target"] = 333
+        config["payout_bands"] = [
+            {"minimum_percent": 0, "payout_percent": 0},
+            {"minimum_percent": 40, "payout_percent": 0},
+            {"minimum_percent": 65, "payout_percent": 10},
+            {"minimum_percent": 100, "payout_percent": 100},
+        ]
+        self.assertEqual({"minimum_percent": 65, "points": 217},
+                         periodic.first_paying_threshold(config))
+        config["allowance_at_100"] = 1
+        self.assertEqual({"minimum_percent": 100, "points": 333},
+                         periodic.first_paying_threshold(config))
+        config["allowance_at_100"] = 0
+        self.assertIsNone(periodic.first_paying_threshold(config))
 
     def test_backup_json_round_trip_preserves_state(self) -> None:
         state = periodic.new_state(moment("2026-09-01T10:00:00+00:00"), self.config, PRAGUE)

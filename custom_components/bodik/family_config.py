@@ -10,7 +10,9 @@ from copy import deepcopy
 from typing import Any
 import unicodedata
 
-FAMILY_CONFIG_VERSION = 1
+FAMILY_CONFIG_VERSION = 2
+FAMILY_INITIAL_CONFIG_VERSION = 1
+FAMILY_TARGETS = {"daily_target": 20, "weekly_target": 120, "monthly_target": 520}
 FAMILY_PROFILE_NAMES = {"tomasek", "kuba", "kubik"}
 
 FAMILY_REASON_CATEGORIES = [
@@ -95,12 +97,12 @@ def is_family_profile(name: str) -> bool:
 def family_periodic_config() -> dict[str, Any]:
     """Return the agreed independently stored per-profile configuration."""
     return {
-        "daily_target": 30,
+        "daily_target": FAMILY_TARGETS["daily_target"],
         "base_digital_minutes": 120,
         "bonus_step_points": 5,
         "bonus_step_minutes": 15,
         "max_digital_minutes": 180,
-        "weekly_target": 180,
+        "weekly_target": FAMILY_TARGETS["weekly_target"],
         "weekly_tick_weekday": 4,
         "weekly_tick_time": "17:00",
         "weekly_reward": {
@@ -108,7 +110,7 @@ def family_periodic_config() -> dict[str, Any]:
             "label": "Týdenní odměna",
             "description": "Konkrétní efekt bude nastaven později.",
         },
-        "monthly_target": 780,
+        "monthly_target": FAMILY_TARGETS["monthly_target"],
         "allowance_at_100": 200,
         "payout_bands": [
             {"minimum_percent": 0, "payout_percent": 0},

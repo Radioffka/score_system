@@ -61,3 +61,23 @@ test("panel retires the legacy catalogue and labels periodic entitlement semanti
   assert.match(source, /Odhad kapesného/);
   assert.match(source, /✓ Denní cíl splněn/);
 });
+
+test("dashboard separates periodic progress from administrative long-term score", async () => {
+  const source = await readFile(
+    new URL("../custom_components/bodik/frontend/bodik-panel.js", import.meta.url),
+    "utf8",
+  );
+  const dashboard = source.slice(source.indexOf("  _renderDashboard() {"), source.indexOf("  _renderReasonGroups() {"));
+  const quickActions = source.slice(source.indexOf("  _renderQuickActions() {"), source.indexOf("  _renderSettings() {"));
+  const settings = source.slice(source.indexOf("  _renderSettings() {"), source.indexOf("  _renderPeriodicSettings() {"));
+  assert.ok(dashboard.indexOf("this._renderPeriodicDashboard()") < dashboard.indexOf("Historické / dlouhodobé skóre"));
+  assert.match(dashboard, /Nemění denní, týdenní ani měsíční výkon/);
+  assert.match(source, /monthly\.first_paying_threshold\.points_remaining/);
+  assert.match(quickActions, /Rychlé změny výkonu/);
+  assert.doesNotMatch(quickActions, /set_score|set-value|Vynulovat/);
+  assert.match(settings, /Administrativní dlouhodobé skóre/);
+  assert.match(settings, /Nastavit dlouhodobé skóre/);
+  assert.match(settings, /Vynulovat dlouhodobé skóre/);
+  assert.match(source, /input\.value\.trim\(\) === ""/);
+  assert.doesNotMatch(source, />Vynulovat<|>Nastavit skóre</);
+});

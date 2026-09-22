@@ -41,6 +41,8 @@ from .const import (
 )
 from .family_config import (
     FAMILY_CONFIG_VERSION,
+    FAMILY_INITIAL_CONFIG_VERSION,
+    FAMILY_TARGETS,
     family_periodic_config,
     family_reason_categories,
     family_reasons,
@@ -51,6 +53,7 @@ from .periodic import (
     close_periods,
     current_status,
     default_config,
+    first_paying_threshold,
     iso_utc,
     new_state,
     next_boundary,
@@ -304,11 +307,14 @@ class BodikManager:
         if theme not in {"auto", "dark", "light"}:
             theme = "auto"
 
+        family_version = max(0, _integer(raw.get("family_config_version"), 0))
+        family_profile = is_family_profile(name)
         should_seed_family = (
             apply_family_seed
-            and is_family_profile(name)
-            and _integer(raw.get("family_config_version"), 0) < FAMILY_CONFIG_VERSION
+            and family_profile
+            and family_version < FAMILY_INITIAL_CONFIG_VERSION
         )
+        should_update_family_targets = family_profile and family_version == FAMILY_INITIAL_CONFIG_VERSION
         reasons: list[dict[str, Any]] = []
         seen_reason_ids: set[str] = set()
         raw_reasons = [] if should_seed_family else raw.get("reasons", [])
@@ -339,7 +345,7 @@ class BodikManager:
         if should_seed_family:
             # Issue #3 is the replacement active model for these two existing
             # family profiles. Legacy reasons remain represented in history,
-            # but must not stay actionable alongside the new 30-point model.
+            # but must not stay actionable alongside the family model.
             reasons = family_reasons()
 
         offline_daily_cap = 8 if should_seed_family else self._sanitize_offline_cap(
@@ -408,10 +414,13 @@ class BodikManager:
                     }
                 )
 
+        periodic_config_raw = family_periodic_config() if should_seed_family else raw.get("periodic_config")
+        if should_update_family_targets:
+            # v1 marks the existing family seed. Change only its three targets;
+            # the independent ledger and all other profile settings stay intact.
+            periodic_config_raw = {**(periodic_config_raw or {}), **FAMILY_TARGETS}
         try:
-            periodic_config = validate_config(
-                family_periodic_config() if should_seed_family else raw.get("periodic_config")
-            )
+            periodic_config = validate_config(periodic_config_raw)
         except PeriodicValidationError as err:
             raise BodikValidationError(str(err)) from err
 
@@ -445,8 +454,8 @@ class BodikManager:
             "offline_daily_cap": offline_daily_cap,
             "family_config_version": (
                 FAMILY_CONFIG_VERSION
-                if should_seed_family
-                else max(0, _integer(raw.get("family_config_version"), 0))
+                if should_seed_family or should_update_family_targets
+                else family_version
             ),
         }
 
@@ -746,6 +755,12 @@ class BodikManager:
             f"{config['allowance_at_100']} Kč a může růst až na "
             f"{maximum_allowance} Kč."
         )
+        first_payout = first_paying_threshold(config)
+        if first_payout is not None:
+            paragraphs.append(
+                f"Kapesné začíná od {first_payout['minimum_percent']} % měsíčního cíle "
+                f"({first_payout['points']} bodů)."
+            )
         if profile.get("offline_daily_cap") is not None:
             paragraphs.append(
                 "Za Offline aktivity lze získat maximálně "
