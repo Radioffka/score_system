@@ -862,7 +862,7 @@ class BodikPanel extends LitElement {
           <input class="edit-reason-limit" type="number" min="1" step="1" .value=${reason.max_occurrences_per_day ?? ""} placeholder="Bez denního limitu" aria-label="Maximální počet použití za den" />
           <div class="item-actions"><button class="btn" @click=${() => this._saveReasonEdited(index)}>Uložit</button><button class="btn ghost" @click=${this._cancelEdit}>Zrušit</button></div>
         </article>`
-      : html`<article class="manage-item"><span><strong>${reason.name}</strong><small>${this._reasonCategoryLabel(reason.category)} · ${reason.max_occurrences_per_day ? `max. ${reason.max_occurrences_per_day}× denně` : "bez denního limitu"}</small></span><strong class=${reason.value >= 0 ? "positive" : "negative"}>${reason.value >= 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>`;
+      : html`<article class="manage-item"><span><strong>${reason.name}</strong><small>${this._reasonCategoryLabel(reason.category)} · ${reason.max_occurrences_per_day ? `max. ${reason.max_occurrences_per_day}× denně` : "bez denního limitu"}</small></span><strong class=${reason.value > 0 ? "positive" : reason.value < 0 ? "negative" : "neutral"}>${reason.value > 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>`;
   }
 
   _reasonCategoryOptions(selected) {
