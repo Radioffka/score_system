@@ -1,8 +1,8 @@
-// Bodík v9.2.0 — authenticated WebSocket client for the Bodík integration.
+// Bodík v9.2.1 — authenticated WebSocket client for the Bodík integration.
 import { LitElement, html, css } from "/local/lit-element.js";
 import { defaultReasonCategories, entitlementView, filterReasonGroups, orderedCategories } from "./bodik-ui-utils.mjs";
 
-const VERSION = "9.2.0";
+const VERSION = "9.2.1";
 const STYLESHEET_URL = new URL("./bodik-panel.css", import.meta.url).href;
 
 class BodikPanel extends LitElement {
@@ -284,7 +284,6 @@ class BodikPanel extends LitElement {
                 <div class="profile-overview">
                   <span class="profile-eyebrow">Aktivní profil</span>
                   <strong class="profile-name">${this.activeProfile.name}</strong>
-                  <span class="profile-score"><strong>${this.score}</strong><span>bodů</span></span>
                 </div>
               `
             : ""}
@@ -343,16 +342,12 @@ class BodikPanel extends LitElement {
   _renderDashboard() {
     const visibleHistory = [...this.history].reverse().slice(0, this._historyLimit);
     return html`
-      <section class="card focus">
-        <div class="focus-block score-block">
-          <div class="label">Body · ${this.activeProfile.name}</div>
-          <div class="score">${this.score}</div>
-        </div>
-        <div class="focus-block score-context"><div class="label">Dlouhodobé skóre</div><div>Slouží pro historii a návaznost. Aktuální nároky určuje periodický systém.</div></div>
-      </section>
-
-      ${this._renderEntitlements()}
       ${this._renderPeriodicDashboard()}
+      ${this._renderEntitlements()}
+
+      <section class="card long-term-summary">
+        <div><h2>Historické / dlouhodobé skóre: ${this.score}</h2><p class="note">Nemění denní, týdenní ani měsíční výkon.</p></div>
+      </section>
 
       <section class="card rules-card">
         <h2>Aktuální pravidla</h2>
@@ -480,6 +475,9 @@ class BodikPanel extends LitElement {
             <div class="periodic-heading"><div><span class="periodic-kicker">Tento měsíc</span><strong>${monthly.points} / ${monthly.target} · ${monthly.estimated_allowance.completion_percent}%</strong></div></div>
             <div class="progress monthly"><span style=${`width:${this._progressWidth(monthly.points, monthly.target, monthlyCap) / monthlyCap * 100}%`}></span></div>
             <div class="periodic-details single"><span>Odhad kapesného: <strong>${monthly.estimated_allowance.amount} Kč</strong> (${monthly.estimated_allowance.payout_percent} %)</span></div>
+            ${monthly.estimated_allowance.amount === 0 && monthly.first_paying_threshold
+              ? html`<small class="allowance-threshold">První kapesné od ${monthly.first_paying_threshold.minimum_percent} % (${monthly.first_paying_threshold.points} bodů). Chybí ${monthly.first_paying_threshold.points_remaining} bodů.</small>`
+              : ""}
           </article>
         </div>
       </section>
@@ -528,7 +526,8 @@ class BodikPanel extends LitElement {
   _renderQuickActions() {
     return html`
       <section class="card">
-        <h2>Rychlé změny</h2>
+        <h2>Rychlé změny výkonu</h2>
+        <p class="note">Tyto bodové změny se počítají do denního, týdenního a měsíčního výkonu.</p>
         <div class="quick-actions">
           <div class="quick-buttons">
             ${[-5, -1, 1, 5].map(
@@ -541,12 +540,6 @@ class BodikPanel extends LitElement {
             <label class="sr-only" for="custom-delta">Počet bodů</label>
             <input id="custom-delta" type="number" step="1" placeholder="± body" />
             <button class="btn" @click=${this._applyCustomDelta} ?disabled=${this._saving}>Použít</button>
-          </div>
-          <div class="form-row set-score">
-            <label class="sr-only" for="set-value">Nové výsledné skóre</label>
-            <input id="set-value" type="number" step="1" placeholder="Nastavit na…" />
-            <button class="btn ghost" @click=${this._applySetValue} ?disabled=${this._saving}>Nastavit skóre</button>
-            <button class="btn danger" @click=${() => this._setScore(0, "Reset bodů")} ?disabled=${this._saving}>Vynulovat</button>
           </div>
         </div>
       </section>
@@ -605,6 +598,22 @@ class BodikPanel extends LitElement {
 
       ${this._renderReasonSettings()}
       ${this._renderPeriodicSettings()}
+
+      <details class="card settings-section">
+        <summary class="settings-section-header">
+          <h2>Administrativní dlouhodobé skóre · ${this.activeProfile.name}</h2>
+          <span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="settings-section-body">
+          <p class="note">Tato operace nemění dnešní, týdenní ani měsíční výkon a neovlivní kapesné.</p>
+          <div class="form-row set-score">
+            <label class="sr-only" for="set-value">Nové dlouhodobé skóre</label>
+            <input id="set-value" type="number" step="1" placeholder="Nastavit na…" />
+            <button class="btn ghost" @click=${this._applySetValue} ?disabled=${this._saving}>Nastavit dlouhodobé skóre</button>
+            <button class="btn danger" @click=${() => this._setScore(0, "Vynulování dlouhodobého skóre")} ?disabled=${this._saving}>Vynulovat dlouhodobé skóre</button>
+          </div>
+        </div>
+      </details>
 
       <details class="card settings-section" open>
         <summary class="settings-section-header">
@@ -878,7 +887,7 @@ class BodikPanel extends LitElement {
     try {
       await this.hass.callWS({ type: "bodik/set_score", profile_id: this.activeProfile.id, value: Math.trunc(Number(value)), reason });
       await this._loadAllData({ silent: true });
-      this._showToast(`Skóre bylo nastaveno na ${this.score}`);
+      this._showToast(`Dlouhodobé skóre bylo nastaveno na ${this.score}. Periodický výkon se nemění.`);
     } catch (error) {
       this._showToast(this._errorMessage(error, "Změnu skóre nelze uložit."), true, 7000);
     } finally {
@@ -939,12 +948,16 @@ class BodikPanel extends LitElement {
 
   _applySetValue() {
     const input = this.shadowRoot.querySelector("#set-value");
-    const value = Number(input.value);
-    if (!Number.isFinite(value)) {
-      this._showToast("Zadejte výsledné skóre.", true);
+    if (!input || input.value.trim() === "") {
+      this._showToast("Zadejte nové dlouhodobé skóre.", true);
       return;
     }
-    this._setScore(value, "Manuální nastavení");
+    const value = Number(input.value);
+    if (!Number.isInteger(value)) {
+      this._showToast("Zadejte celé číslo pro dlouhodobé skóre.", true);
+      return;
+    }
+    this._setScore(value, "Nastavení dlouhodobého skóre");
     input.value = "";
   }
 

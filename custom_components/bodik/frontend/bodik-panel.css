@@ -169,9 +169,7 @@ h2 {
 
 .profile-overview {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 14px;
 }
 
 .profile-eyebrow {
@@ -189,21 +187,6 @@ h2 {
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.profile-score {
-  display: flex;
-  grid-column: 2;
-  grid-row: 1 / 3;
-  align-items: baseline;
-  gap: 5px;
-  color: var(--bodik-muted);
-}
-
-.profile-score strong {
-  color: var(--bodik-text);
-  font-size: clamp(2rem, 3.5vw, 2.75rem);
-  line-height: 1;
 }
 
 .profile-choices {
@@ -384,15 +367,18 @@ h2 {
   to { transform: rotate(360deg); }
 }
 
-.focus {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.55fr) minmax(240px, 1.45fr);
-  gap: 12px;
+.long-term-summary h2 {
+  margin-bottom: 4px;
+  font-size: 1rem;
 }
 
-.score-context {
-  display: grid;
-  align-content: center;
+.long-term-summary .note {
+  margin: 0;
+}
+
+.allowance-threshold {
+  color: var(--bodik-muted);
+  line-height: 1.4;
 }
 
 .entitlement-card {
@@ -437,17 +423,6 @@ h2 {
   color: var(--bodik-muted);
 }
 
-.focus-block {
-  min-width: 0;
-  border-radius: 12px;
-  background: var(--bodik-surface);
-  padding: 14px;
-}
-
-.score-block {
-  background: color-mix(in srgb, var(--bodik-primary) 14%, var(--bodik-surface));
-}
-
 .label,
 .muted,
 .note {
@@ -460,12 +435,6 @@ h2 {
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-}
-
-.score {
-  font-size: clamp(2.4rem, 6vw, 4rem);
-  font-weight: 800;
-  line-height: 1;
 }
 
 .next {
@@ -1135,15 +1104,6 @@ footer {
     justify-content: space-between;
   }
 
-  .focus {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .score-block {
-    grid-column: 1 / -1;
-    text-align: center;
-  }
-
   .reason-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1204,10 +1164,6 @@ footer {
     display: none;
   }
 
-  .focus {
-    grid-template-columns: 1fr;
-  }
-
   .periodic-secondary,
   .settings-grid,
   .band-row {
@@ -1222,10 +1178,6 @@ footer {
   .periodic-details {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .score-block {
-    grid-column: auto;
   }
 
   .form-row,

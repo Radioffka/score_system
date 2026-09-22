@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
-from datetime import timedelta, timezone
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import sys
 import types
@@ -155,15 +157,16 @@ class ManagerMigrationTest(unittest.TestCase):
         self.assertEqual("Rodinná pravidla", profile["rules"])
         self.assertEqual("/local/tomas.jpg", profile["childPhotoUrl"])
         self.assertEqual("input_number.tomas", profile["scoreEntity"])
-        self.assertEqual(30, profile["periodic_config"]["daily_target"])
+        self.assertEqual(20, profile["periodic_config"]["daily_target"])
         self.assertEqual(120, profile["periodic_config"]["base_digital_minutes"])
         self.assertEqual(5, profile["periodic_config"]["bonus_step_points"])
         self.assertEqual(15, profile["periodic_config"]["bonus_step_minutes"])
         self.assertEqual(180, profile["periodic_config"]["max_digital_minutes"])
-        self.assertEqual(180, profile["periodic_config"]["weekly_target"])
+        self.assertEqual(120, profile["periodic_config"]["weekly_target"])
         self.assertEqual(4, profile["periodic_config"]["weekly_tick_weekday"])
         self.assertEqual("17:00", profile["periodic_config"]["weekly_tick_time"])
-        self.assertEqual(780, profile["periodic_config"]["monthly_target"])
+        self.assertEqual(520, profile["periodic_config"]["monthly_target"])
+        self.assertEqual(2, profile["family_config_version"])
         self.assertEqual(200, profile["periodic_config"]["allowance_at_100"])
         self.assertEqual(150, profile["periodic_config"]["max_payout_percent"])
         self.assertEqual(
@@ -231,6 +234,89 @@ class ManagerMigrationTest(unittest.TestCase):
         self.assertEqual(1, profile["periodic_config"]["daily_target"])
         self.assertEqual([], profile["reasons"])
         self.assertIsNone(profile["offline_daily_cap"])
+
+    def test_family_v1_targets_migrate_once_without_rewriting_periodic_accounting(self) -> None:
+        hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
+        manager = manager_module.BodikManager(hass)
+        manager._time_zone = lambda: timezone.utc
+        periodic = sys.modules["custom_components.bodik.periodic"]
+        when = datetime.fromisoformat("2026-09-10T10:00:00+00:00")
+        old_config = family_module.family_periodic_config()
+        old_config.update({"daily_target": 30, "weekly_target": 180, "monthly_target": 780})
+        old_config["weekly_reward"] = {"enabled": True, "label": "Vlastní výlet", "description": "Sobota"}
+        old_config["bonus_step_minutes"] = 12
+        state = periodic.new_state(when, old_config, timezone.utc)
+        state["transactions"] = [
+            {"id": "earned", "time": "2026-09-10T11:00:00+00:00", "delta": 17,
+             "kind": "reason", "counts_toward_periods": True,
+             "reason_id": "home_walk_dog", "category": "home"},
+            {"id": "admin", "time": "2026-09-10T11:30:00+00:00", "delta": 500,
+             "kind": "set_score", "counts_toward_periods": False,
+             "reason_id": None, "category": None},
+        ]
+        state["daily_results"] = [{"points": 30, "target": 30, "entitlement": 120}]
+        state["weekly_results"] = [{"points": 180, "target": 180, "success": True}]
+        state["monthly_results"] = [{"points": 780, "target": 780, "allowance": 200}]
+        state["today_digital_entitlement"] = 135
+        state["active_weekly_reward"] = {"label": "Vlastní výlet", "unlocked": True}
+        history = [{"time": "2026-09-10T11:00:00+00:00", "desc": "Starý záznam",
+                    "delta": 17, "prev": 483, "next": 500, "user": "Rodič",
+                    "kind": "reason", "counts_toward_periods": True,
+                    "reason_id": "home_walk_dog", "category": "home"}]
+        old_profile = {
+            "id": "tomas", "name": "Tomášek", "score": 500,
+            "family_config_version": 1, "periodic_config": old_config, "periodic": state,
+            "history": history, "reasons": family_module.family_reasons(),
+            "reason_categories": family_module.family_reason_categories(),
+            "offline_daily_cap": 6, "rules": "Vlastní pravidla",
+            "childPhotoUrl": "/local/tomas.jpg", "scoreEntity": "input_number.tomas",
+        }
+        stored = {"data_version": 4, "revision": 8, "admin_user_ids": ["parent"],
+                  "profiles": [old_profile, {**deepcopy(old_profile), "id": "kuba", "name": "Kuba"}]}
+        migrated = manager._normalize_stored_data(stored)
+        for profile in migrated["profiles"]:
+            self.assertEqual(2, profile["family_config_version"])
+            self.assertEqual((20, 120, 520), tuple(
+                profile["periodic_config"][key]
+                for key in ("daily_target", "weekly_target", "monthly_target")
+            ))
+            for key, value in old_config.items():
+                if key not in family_module.FAMILY_TARGETS:
+                    self.assertEqual(value, profile["periodic_config"][key])
+            self.assertEqual(state, profile["periodic"])
+            self.assertEqual(history, profile["history"])
+            self.assertEqual(500, profile["score"])
+            self.assertEqual("Vlastní pravidla", profile["rules"])
+            self.assertEqual("/local/tomas.jpg", profile["childPhotoUrl"])
+            self.assertEqual(family_module.family_reasons(), profile["reasons"])
+            status = periodic.current_status(
+                profile["periodic"], profile["periodic_config"],
+                datetime.fromisoformat("2026-09-10T12:00:00+00:00"), timezone.utc,
+            )
+            self.assertEqual((17, 17, 17), tuple(status[period]["points"]
+                             for period in ("daily", "weekly", "monthly")))
+            self.assertEqual((20, 120, 520), tuple(status[period]["target"]
+                             for period in ("daily", "weekly", "monthly")))
+        again = manager._normalize_stored_data(json.loads(json.dumps(migrated)))
+        self.assertEqual(migrated["profiles"], again["profiles"])
+        self.assertEqual(["parent"], again["admin_user_ids"])
+
+    def test_target_migration_does_not_touch_non_family_or_new_profiles(self) -> None:
+        hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
+        manager = manager_module.BodikManager(hass)
+        manager._time_zone = lambda: timezone.utc
+        stored = {"data_version": 4, "profiles": [
+            {"id": "other", "name": "Další dítě", "family_config_version": 1,
+             "periodic_config": {"daily_target": 9, "weekly_target": 40, "monthly_target": 100}},
+            {"id": "new", "name": "Kubík", "family_config_version": 0,
+             "periodic_config": {"daily_target": 7, "weekly_target": 35, "monthly_target": 90}},
+            {"id": "updated", "name": "Tomášek", "family_config_version": 2,
+             "periodic_config": {"daily_target": 25, "weekly_target": 135, "monthly_target": 540}},
+        ]}
+        normalized = manager._normalize_stored_data(stored)
+        for profile, expected in zip(normalized["profiles"], [(9, 40, 100), (7, 35, 90), (25, 135, 540)]):
+            self.assertEqual(expected, tuple(profile["periodic_config"][key]
+                                              for key in ("daily_target", "weekly_target", "monthly_target")))
 
     def test_v9_category_migration_preserves_periodic_state_and_is_idempotent(self) -> None:
         hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
@@ -331,9 +417,30 @@ class ManagerMigrationTest(unittest.TestCase):
             }],
         })["profiles"][0]
         summary = manager.generated_rules_summary(profile)
-        for expected in ("17 bodů", "45 minut", "4 bodů", "+7 minut", "73 minut", "91 bodů", "středu", "16:30", "333 bodů", "90 Kč", "108 Kč", "6 kladných"):
+        for expected in ("17 bodů", "45 minut", "4 bodů", "+7 minut", "73 minut", "91 bodů", "středu", "16:30", "333 bodů", "90 Kč", "108 Kč", "6 kladných", "50 %", "167 bodů"):
             self.assertIn(expected, summary)
         self.assertNotIn("30 bodů", summary)
+
+    def test_generated_rules_use_first_paying_band_for_independent_profile(self) -> None:
+        hass = types.SimpleNamespace(config=types.SimpleNamespace(time_zone="UTC"))
+        manager = manager_module.BodikManager(hass)
+        manager._time_zone = lambda: timezone.utc
+        profile = manager._normalize_stored_data({
+            "data_version": 4,
+            "profiles": [{"id": "other", "name": "Dítě",
+                          "periodic_config": {"monthly_target": 333,
+                                              "allowance_at_100": 90,
+                                              "payout_bands": [
+                                                  {"minimum_percent": 0, "payout_percent": 0},
+                                                  {"minimum_percent": 40, "payout_percent": 0},
+                                                  {"minimum_percent": 65, "payout_percent": 10},
+                                                  {"minimum_percent": 100, "payout_percent": 100},
+                                              ]}}],
+        })["profiles"][0]
+        summary = manager.generated_rules_summary(profile)
+        self.assertIn("od 65 %", summary)
+        self.assertIn("217 bodů", summary)
+        self.assertNotIn("od 50 %", summary)
 
 
 class ReasonApplicationTest(unittest.IsolatedAsyncioTestCase):
@@ -360,6 +467,37 @@ class ReasonApplicationTest(unittest.IsolatedAsyncioTestCase):
             "offline_daily_cap": offline_cap,
             "reason_categories": categories or [],
         }
+
+    async def test_set_and_reset_long_term_score_do_not_change_periodic_progress(self) -> None:
+        manager = self.make_manager([self.profile("alpha", [])])
+        periodic = sys.modules["custom_components.bodik.periodic"]
+        await manager.async_adjust_score("alpha", 5, "Běžná změna", "Parent")
+        profile = manager.data["profiles"][0]
+        profile["periodic"]["monthly_results"].append(
+            {"points": 90, "target": 100, "amount": 180}
+        )
+        snapshots = deepcopy(profile["periodic"]["monthly_results"])
+        moment = datetime.now(timezone.utc) + timedelta(minutes=1)
+
+        def progress():
+            current = manager.data["profiles"][0]
+            status = periodic.current_status(
+                current["periodic"], current["periodic_config"], moment, timezone.utc
+            )
+            return tuple(status[period]["points"] for period in ("daily", "weekly", "monthly"))
+
+        self.assertEqual((5, 5, 5), progress())
+        await manager.async_set_score("alpha", 500, "Administrativní nastavení", "Parent")
+        self.assertEqual(500, manager.data["profiles"][0]["score"])
+        self.assertEqual((5, 5, 5), progress())
+        await manager.async_set_score("alpha", 0, "Vynulování dlouhodobého skóre", "Parent")
+        self.assertEqual(0, manager.data["profiles"][0]["score"])
+        self.assertEqual((5, 5, 5), progress())
+        profile = manager.data["profiles"][0]
+        self.assertEqual(snapshots, profile["periodic"]["monthly_results"])
+        self.assertEqual([True, False, False], [
+            tx["counts_toward_periods"] for tx in profile["periodic"]["transactions"]
+        ])
 
     async def test_apply_reason_uses_server_value_and_enforces_daily_limit(self) -> None:
         manager = self.make_manager([

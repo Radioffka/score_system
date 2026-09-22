@@ -180,6 +180,18 @@ def allowance(points: int, config: dict[str, Any]) -> dict[str, int | float]:
     }
 
 
+def first_paying_threshold(config: dict[str, Any]) -> dict[str, int] | None:
+    """Return the first configured monthly band that pays a non-zero amount."""
+    for band in config["payout_bands"]:
+        payout = band["payout_percent"]
+        amount = floor(config["allowance_at_100"] * payout / 100 + 0.5)
+        if amount > 0:
+            minimum = band["minimum_percent"]
+            points = (config["monthly_target"] * minimum + 99) // 100
+            return {"minimum_percent": minimum, "points": points}
+    return None
+
+
 def _local_boundary(day: date, clock: time, zone: ZoneInfo) -> datetime:
     """Construct a real local boundary; normalize nonexistent DST wall times."""
     candidate = datetime.combine(day, clock, zone)
@@ -349,6 +361,12 @@ def current_status(state: dict[str, Any], config: dict[str, Any], now: datetime,
     weekly_points = transaction_sum(state, weekly_start, now)
     monthly_points = transaction_sum(state, monthly_start, now)
     estimated = allowance(monthly_points, config)
+    first_payout = first_paying_threshold(config)
+    if first_payout is not None:
+        first_payout = {
+            **first_payout,
+            "points_remaining": max(0, first_payout["points"] - monthly_points),
+        }
     return {
         "daily": {"points": daily_points, "target": config["daily_target"],
                   "remaining": max(0, config["daily_target"] - daily_points),
@@ -362,6 +380,7 @@ def current_status(state: dict[str, Any], config: dict[str, Any], now: datetime,
                    "previous_result": state.get("weekly_results", [])[-1] if state.get("weekly_results") else None},
         "monthly": {"points": monthly_points, "target": config["monthly_target"],
                     "period_start": iso_utc(monthly_start), "estimated_allowance": estimated,
+                    "first_paying_threshold": first_payout,
                     "previous_result": state.get("monthly_results", [])[-1] if state.get("monthly_results") else None},
     }
 

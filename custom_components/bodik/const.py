@@ -1,7 +1,7 @@
 """Constants for the Bodik integration."""
 
 DOMAIN = "bodik"
-VERSION = "9.2.0"
+VERSION = "9.2.1"
 
 FRONTEND_URL_ROOT = "/bodik-panel"
 

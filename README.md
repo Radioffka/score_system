@@ -133,8 +133,8 @@ do skrytého `legacy_rewards` pouze pro datovou/rollback kompatibilitu; v aktivn
 rozhraní ani ve výpočtech v9.1 se nepoužívá.
 
 Při jednorázové migraci existujících profilů Tomášek a Kuba/Kubík se použije
-dohodnutá rodinná konfigurace z issue #3: 30 bodů denně, 120–180 minut,
-180 bodů týdně s páteční uzávěrou v 17:00, 780 bodů měsíčně, 200 Kč při 100 %,
+dohodnutá rodinná konfigurace aktualizovaná v issue #11: 20 bodů denně, 120–180 minut,
+120 bodů týdně s páteční uzávěrou v 17:00, 520 bodů měsíčně, 200 Kč při 100 %,
 strop 150 % a sada rodinných důvodů. Tyto hodnoty nejsou obecnými výchozími
 hodnotami nových instalací ani nových profilů a po migraci zůstávají pro každý
 profil samostatně editovatelné.
