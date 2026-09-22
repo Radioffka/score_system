@@ -1,8 +1,8 @@
-// Bodík v9.2.1 — authenticated WebSocket client for the Bodík integration.
+// Bodík v9.2.2 — authenticated WebSocket client for the Bodík integration.
 import { LitElement, html, css } from "/local/lit-element.js";
 import { defaultReasonCategories, entitlementView, filterReasonGroups, orderedCategories } from "./bodik-ui-utils.mjs";
 
-const VERSION = "9.2.1";
+const VERSION = "9.2.2";
 const STYLESHEET_URL = new URL("./bodik-panel.css", import.meta.url).href;
 
 class BodikPanel extends LitElement {
