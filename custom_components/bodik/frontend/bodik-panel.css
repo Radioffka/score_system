@@ -1324,10 +1324,6 @@ footer {
   .manage-item:not(.editing) > strong {
     justify-self: start;
   }
-
-  .manage-item:not(.editing) .item-actions {
-    justify-self: end;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
