@@ -698,10 +698,17 @@ textarea::placeholder {
   color: color-mix(in srgb, var(--bodik-muted) 75%, transparent);
 }
 
-.reasons,
-.manage-grid {
+.reasons {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  gap: 10px;
+}
+
+.manage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(335px, 100%), 1fr));
+  align-items: start;
+  max-width: 1100px;
   gap: 10px;
 }
 
@@ -758,6 +765,10 @@ textarea::placeholder {
   border-radius: 13px;
   background: var(--bodik-surface);
   padding: 0 12px 12px;
+}
+
+.reason-settings-section[open] {
+  overflow: visible;
 }
 
 .reason-settings-group summary {
@@ -962,88 +973,153 @@ textarea::placeholder {
   grid-template-columns: repeat(2, minmax(120px, 1fr));
 }
 
-/* Reason cards in Settings > Důvody: elevated shell, stable grid layout */
-.manage-item {
-  border: 1px solid color-mix(in srgb, var(--bodik-border) 72%, var(--bodik-text));
-  border-radius: 13px;
-  background: var(--bodik-card);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
-  padding: 12px 14px;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.manage-item:hover {
-  border-color: color-mix(in srgb, var(--bodik-primary) 45%, var(--bodik-border));
-  box-shadow: 0 2px 6px rgb(0 0 0 / 10%);
-}
-
-.manage-item:not(.editing) {
+/* Compact reason cards keep text width separate from the action menu. */
+.reason-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  grid-template-areas: "text pill actions";
-  align-items: center;
-  gap: 10px 12px;
+  align-content: start;
+  align-items: stretch;
+  align-self: start;
+  justify-content: stretch;
+  min-height: 88px;
+  gap: 7px;
+  border: 1px solid var(--bodik-border);
+  border-radius: 12px;
+  background: var(--bodik-card);
+  padding: 10px 12px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+  transition: border-color 160ms ease;
 }
 
-.manage-item:not(.editing) > span {
-  grid-area: text;
-  min-width: 0;
+.reason-card:hover,
+.reason-card:focus-within {
+  border-color: color-mix(in srgb, var(--bodik-primary) 45%, var(--bodik-border));
+}
+
+.reason-card.menu-open {
+  position: relative;
+  z-index: 2;
+}
+
+.reason-card-top,
+.reason-card-bottom {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 
-.manage-item:not(.editing) > span strong {
+.reason-card-name {
+  min-width: 0;
   font-size: 0.98rem;
   font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: break-word;
+}
+
+.reason-card-bottom {
+  align-items: center;
+}
+
+.reason-card-bottom small {
+  min-width: 0;
   line-height: 1.3;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
-.manage-item:not(.editing) small {
-  font-size: 0.78rem;
-}
-
-.manage-item:not(.editing) > strong {
-  grid-area: pill;
-  justify-self: end;
+.reason-points {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  min-height: 30px;
-  padding: 3px 10px;
+  flex: none;
+  min-width: 38px;
+  min-height: 27px;
+  padding: 3px 8px;
   border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
 }
 
-.manage-item:not(.editing) > strong.positive {
+.reason-points.positive {
   color: var(--bodik-success);
   background: color-mix(in srgb, var(--bodik-success) 14%, transparent);
   border-color: color-mix(in srgb, var(--bodik-success) 32%, transparent);
 }
 
-.manage-item:not(.editing) > strong.negative {
+.reason-points.negative {
   color: var(--bodik-danger);
   background: color-mix(in srgb, var(--bodik-danger) 14%, transparent);
   border-color: color-mix(in srgb, var(--bodik-danger) 32%, transparent);
 }
 
-.manage-item:not(.editing) > strong.neutral {
+.reason-points.neutral {
   color: var(--bodik-muted);
   background: color-mix(in srgb, var(--bodik-surface) 55%, transparent);
   border-color: var(--bodik-border);
 }
 
-.manage-item:not(.editing) .item-actions {
-  grid-area: actions;
-  justify-self: end;
-  flex-wrap: nowrap;
+.reason-menu-container {
+  position: relative;
+  flex: none;
+}
+
+.reason-menu-trigger {
+  display: grid;
+  width: 32px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--bodik-muted);
+  cursor: pointer;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.reason-menu-trigger:hover,
+.reason-menu-trigger[aria-expanded="true"] {
+  border-color: var(--bodik-border);
+  background: var(--bodik-surface);
+  color: var(--bodik-text);
+}
+
+.reason-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 3;
+  min-width: 142px;
+  border: 1px solid var(--bodik-border);
+  border-radius: 10px;
+  background: var(--bodik-card);
+  box-shadow: var(--bodik-shadow);
+  padding: 4px;
+}
+
+.reason-menu button {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 7px 9px;
+  color: var(--bodik-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.reason-menu button:hover,
+.reason-menu button:focus-visible {
+  background: var(--bodik-surface);
+}
+
+.reason-menu button.destructive {
+  color: var(--bodik-danger);
 }
 
 .reward-form {
@@ -1309,20 +1385,6 @@ footer {
 
   .backup-actions .btn {
     width: 100%;
-  }
-}
-
-/* Mobile: stack non-editing reason cards to avoid horizontal pressure */
-@media (max-width: 520px) {
-  .manage-item:not(.editing) {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "text  text"
-      "pill  actions";
-  }
-
-  .manage-item:not(.editing) > strong {
-    justify-self: start;
   }
 }
 

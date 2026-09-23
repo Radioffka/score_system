@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 
 import {
   entitlementView,
@@ -94,4 +95,69 @@ test("settings offer scoped reset with HA-local schedule and stronger full-reset
   for (const scope of ["daily", "weekly", "monthly", "all"]) {
     assert.match(source, new RegExp(`_resetPeriod\\("${scope}"\\)`));
   }
+});
+
+test("reason action menu opens one card, supports keyboard, and closes outside", async () => {
+  const source = await readFile(
+    new URL("../custom_components/bodik/frontend/bodik-panel.js", import.meta.url), "utf8",
+  );
+  const start = source.indexOf("class BodikPanel extends LitElement {");
+  const end = source.indexOf("\nif (!customElements.get", start);
+  assert.ok(start >= 0 && end > start);
+  const context = vm.createContext({ LitElement: class {} });
+  vm.runInContext(`${source.slice(start, end)}\nglobalThis.BodikPanel = BodikPanel;`, context);
+  const panel = Object.create(context.BodikPanel.prototype);
+  const card = {};
+  const focused = [];
+  const first = { focus: () => { panel.shadowRoot.activeElement = first; focused.push("edit"); } };
+  const second = { focus: () => { panel.shadowRoot.activeElement = second; focused.push("delete"); } };
+  const trigger = { focus: () => focused.push("trigger") };
+  panel.updateComplete = Promise.resolve();
+  panel._openReasonMenuId = null;
+  panel.shadowRoot = {
+    activeElement: null,
+    querySelector(selector) {
+      if (selector.endsWith(".reason-menu button")) return first;
+      if (selector.endsWith(".reason-menu-trigger")) return trigger;
+      if (selector.startsWith(".reason-card")) return card;
+      return null;
+    },
+  };
+  await panel._toggleReasonMenu("reason-a");
+  assert.equal(panel._openReasonMenuId, "reason-a");
+  assert.equal(focused.at(-1), "edit");
+  panel._handleReasonMenuKeydown({
+    key: "ArrowDown", currentTarget: { querySelectorAll: () => [first, second] },
+    preventDefault() {},
+  });
+  assert.equal(focused.at(-1), "delete");
+  await panel._toggleReasonMenu("reason-b");
+  assert.equal(panel._openReasonMenuId, "reason-b");
+  panel._handleReasonMenuOutside({ composedPath: () => [card] });
+  assert.equal(panel._openReasonMenuId, "reason-b");
+  panel._handleReasonMenuOutside({ composedPath: () => [{}] });
+  assert.equal(panel._openReasonMenuId, null);
+  await panel._toggleReasonMenu("reason-a");
+  let prevented = false;
+  await panel._handleReasonMenuEscape({ key: "Escape", preventDefault: () => { prevented = true; } });
+  assert.equal(panel._openReasonMenuId, null);
+  assert.equal(prevented, true);
+  assert.equal(focused.at(-1), "trigger");
+});
+
+test("reason cards use wide compact grid and hidden destructive menu action", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL("../custom_components/bodik/frontend/bodik-panel.js", import.meta.url), "utf8"),
+    readFile(new URL("../custom_components/bodik/frontend/bodik-panel.css", import.meta.url), "utf8"),
+  ]);
+  const displayCard = panel.slice(panel.indexOf(': html`<article class="manage-item reason-card'), panel.indexOf("  async _toggleReasonMenu"));
+  assert.match(displayCard, /reason-card-top/);
+  assert.match(displayCard, /reason-card-bottom/);
+  assert.match(displayCard, /reason-menu-trigger/);
+  assert.match(displayCard, /role="menuitem"/);
+  assert.match(displayCard, /class="destructive"/);
+  assert.match(styles, /\.manage-grid\s*\{[^}]*335px/s);
+  assert.match(styles, /\.reason-card\s*\{[^}]*align-self:\s*start/s);
+  assert.match(styles, /\.reason-card-name\s*\{[^}]*overflow-wrap:\s*break-word/s);
+  assert.doesNotMatch(styles, /\.manage-item:not\(\.editing\)/);
 });
