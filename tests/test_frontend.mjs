@@ -83,6 +83,20 @@ test("dashboard separates periodic progress from administrative long-term score"
   assert.doesNotMatch(source, />Vynulovat<|>Nastavit skóre</);
 });
 
+test("settings offer scoped reset with HA-local schedule and stronger full-reset confirmation", async () => {
+  const source = await readFile(
+    new URL("../custom_components/bodik/frontend/bodik-panel.js", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /Administrativní reset bodů/);
+  assert.match(source, /Automatické uzávěry/);
+  assert.match(source, /scope === "all" && !confirm/);
+  assert.match(source, /type: "bodik\/reset_period"/);
+  for (const scope of ["daily", "weekly", "monthly", "all"]) {
+    assert.match(source, new RegExp(`_resetPeriod\\("${scope}"\\)`));
+  }
+});
+
 test("reason action menu opens one card, supports keyboard, and closes outside", async () => {
   const source = await readFile(
     new URL("../custom_components/bodik/frontend/bodik-panel.js", import.meta.url), "utf8",
