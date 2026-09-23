@@ -17,6 +17,7 @@ class BodikPanel extends LitElement {
       _canManage: { type: Boolean, state: true },
       _celebratingDaily: { type: Boolean, state: true },
       _editingReasonIndex: { type: Number, state: true },
+      _openReasonMenuId: { type: String, state: true },
       _error: { type: String, state: true },
       _haEntities: { type: Array, state: true },
       _historyLimit: { type: Number, state: true },
@@ -45,6 +46,7 @@ class BodikPanel extends LitElement {
     this._canManage = false;
     this._celebratingDaily = false;
     this._editingReasonIndex = -1;
+    this._openReasonMenuId = null;
     this._error = "";
     this._haEntities = [];
     this._historyLimit = 10;
@@ -55,6 +57,8 @@ class BodikPanel extends LitElement {
     this._dataLoaded = false;
     this._unsubscribeUpdates = null;
     this._boundVisibilityChange = this._handleVisibilityChange.bind(this);
+    this._boundReasonMenuOutside = this._handleReasonMenuOutside.bind(this);
+    this._boundReasonMenuEscape = this._handleReasonMenuEscape.bind(this);
     this._loadSheetJS();
   }
 
@@ -89,6 +93,9 @@ class BodikPanel extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     document.addEventListener("visibilitychange", this._boundVisibilityChange);
+    document.addEventListener("pointerdown", this._boundReasonMenuOutside);
+    document.addEventListener("focusin", this._boundReasonMenuOutside);
+    document.addEventListener("keydown", this._boundReasonMenuEscape);
     this._refreshInterval = window.setInterval(() => {
       if (!document.hidden) this._loadAllData({ silent: true });
     }, 600000);
@@ -96,6 +103,9 @@ class BodikPanel extends LitElement {
 
   disconnectedCallback() {
     document.removeEventListener("visibilitychange", this._boundVisibilityChange);
+    document.removeEventListener("pointerdown", this._boundReasonMenuOutside);
+    document.removeEventListener("focusin", this._boundReasonMenuOutside);
+    document.removeEventListener("keydown", this._boundReasonMenuEscape);
     if (this._refreshInterval) window.clearInterval(this._refreshInterval);
     if (this._celebrationTimer) window.clearTimeout(this._celebrationTimer);
     if (this._unsubscribeUpdates) {
@@ -801,7 +811,7 @@ class BodikPanel extends LitElement {
       },
     ];
     return html`
-      <details class="card settings-section" open>
+      <details class="card settings-section reason-settings-section" open>
         <summary class="settings-section-header">
           <h2>Důvody · ${this.activeProfile.name}</h2>
           <span class="chevron" aria-hidden="true"></span>
@@ -862,7 +872,65 @@ class BodikPanel extends LitElement {
           <input class="edit-reason-limit" type="number" min="1" step="1" .value=${reason.max_occurrences_per_day ?? ""} placeholder="Bez denního limitu" aria-label="Maximální počet použití za den" />
           <div class="item-actions"><button class="btn" @click=${() => this._saveReasonEdited(index)}>Uložit</button><button class="btn ghost" @click=${this._cancelEdit}>Zrušit</button></div>
         </article>`
-      : html`<article class="manage-item"><span><strong>${reason.name}</strong><small>${this._reasonCategoryLabel(reason.category)} · ${reason.max_occurrences_per_day ? `max. ${reason.max_occurrences_per_day}× denně` : "bez denního limitu"}</small></span><strong class=${reason.value > 0 ? "positive" : reason.value < 0 ? "negative" : "neutral"}>${reason.value > 0 ? "+" : ""}${reason.value}</strong><div class="item-actions"><button class="btn ghost small-btn" @click=${() => (this._editingReasonIndex = index)}>Upravit</button><button class="btn danger small-btn" @click=${() => this._deleteReason(index)}>Smazat</button></div></article>`;
+      : html`<article class="manage-item reason-card ${this._openReasonMenuId === reason.id ? "menu-open" : ""}" data-reason-id=${reason.id}>
+          <div class="reason-card-top">
+            <strong class="reason-card-name">${reason.name}</strong>
+            <span class="reason-points ${reason.value > 0 ? "positive" : reason.value < 0 ? "negative" : "neutral"}" aria-label=${`${reason.value > 0 ? "plus " : reason.value < 0 ? "minus " : ""}${Math.abs(reason.value)} bodů`}>${reason.value > 0 ? "+" : ""}${reason.value}</span>
+          </div>
+          <div class="reason-card-bottom">
+            <small>${this._reasonCategoryLabel(reason.category)} · ${reason.max_occurrences_per_day ? `max. ${reason.max_occurrences_per_day}× denně` : "bez denního limitu"}</small>
+            <div class="reason-menu-container">
+              <button class="reason-menu-trigger" type="button" aria-label=${`Akce pro důvod ${reason.name}`} aria-haspopup="menu" aria-expanded=${this._openReasonMenuId === reason.id ? "true" : "false"} aria-controls=${`reason-menu-${reason.id}`} @click=${() => this._toggleReasonMenu(reason.id)}>⋮</button>
+              ${this._openReasonMenuId === reason.id
+                ? html`<div id=${`reason-menu-${reason.id}`} class="reason-menu" role="menu" aria-label=${`Akce pro důvod ${reason.name}`} @keydown=${this._handleReasonMenuKeydown}>
+                    <button type="button" role="menuitem" @click=${() => this._editReason(index)}>Upravit</button>
+                    <button type="button" role="menuitem" class="destructive" @click=${() => this._deleteReason(index)}>Smazat</button>
+                  </div>`
+                : ""}
+            </div>
+          </div>
+        </article>`;
+  }
+
+  async _toggleReasonMenu(reasonId) {
+    this._openReasonMenuId = this._openReasonMenuId === reasonId ? null : reasonId;
+    if (this._openReasonMenuId === reasonId) {
+      await this.updateComplete;
+      this.shadowRoot.querySelector(`.reason-card[data-reason-id="${reasonId}"] .reason-menu button`)?.focus();
+    }
+  }
+
+  _handleReasonMenuOutside(event) {
+    if (!this._openReasonMenuId) return;
+    const openCard = this.shadowRoot?.querySelector(`.reason-card[data-reason-id="${this._openReasonMenuId}"]`);
+    if (!openCard || !event.composedPath().includes(openCard)) this._openReasonMenuId = null;
+  }
+
+  async _handleReasonMenuEscape(event) {
+    if (event.key !== "Escape" || !this._openReasonMenuId) return;
+    event.preventDefault();
+    const reasonId = this._openReasonMenuId;
+    this._openReasonMenuId = null;
+    await this.updateComplete;
+    this.shadowRoot.querySelector(`.reason-card[data-reason-id="${reasonId}"] .reason-menu-trigger`)?.focus();
+  }
+
+  _handleReasonMenuKeydown(event) {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]')];
+    const current = items.indexOf(this.shadowRoot.activeElement);
+    const next = event.key === "Home" ? 0
+      : event.key === "End" ? items.length - 1
+        : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    event.preventDefault();
+    items[next]?.focus();
+  }
+
+  async _editReason(index) {
+    this._openReasonMenuId = null;
+    this._editingReasonIndex = index;
+    await this.updateComplete;
+    this.shadowRoot.querySelector(".reason-edit .edit-reason-name")?.focus();
   }
 
   _reasonCategoryOptions(selected) {
@@ -1145,6 +1213,7 @@ class BodikPanel extends LitElement {
   }
 
   async _deleteReason(index) {
+    this._openReasonMenuId = null;
     const reason = this.reasons[index];
     if (!confirm(`Smazat důvod „${reason.name}“?`)) return;
     const data = this._cloneData();
@@ -1155,6 +1224,7 @@ class BodikPanel extends LitElement {
 
   _cancelEdit() {
     this._editingReasonIndex = -1;
+    this._openReasonMenuId = null;
   }
 
   _downloadXLSX() {
