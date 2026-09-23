@@ -468,6 +468,108 @@ class ReasonApplicationTest(unittest.IsolatedAsyncioTestCase):
             "reason_categories": categories or [],
         }
 
+    async def test_reset_selective_and_all_preserve_ledger_snapshots_and_entitlements(self) -> None:
+        manager = self.make_manager([self.profile("alpha", []), self.profile("beta", [])])
+        manager.async_can_manage = AsyncMock(return_value=True)
+        manager.async_user_name = AsyncMock(return_value="Parent")
+        manager._async_sync_mirror = AsyncMock()
+        manager._schedule_periodic_tick = lambda: None
+        await manager.async_adjust_score("alpha", 9, "Bonus", "Parent")
+        manager._async_sync_mirror.reset_mock()
+        profile = manager.data["profiles"][0]
+        profile["periodic"]["daily_results"].append({"period_end": "old", "points": 55})
+        profile["periodic"]["today_digital_entitlement"] = 120
+        profile["periodic"]["active_weekly_reward"] = {"unlocked": True}
+        before = deepcopy(profile["periodic"]["transactions"])
+        revision = manager.data["revision"]
+        await manager.async_reset_period("alpha", "daily", revision, "parent")
+        profile = manager.data["profiles"][0]
+        self.assertEqual(9, profile["score"])
+        self.assertIsNotNone(profile["periodic"]["manual_reset_at"]["daily"])
+        self.assertIsNone(profile["periodic"]["manual_reset_at"]["weekly"])
+        self.assertEqual(before, profile["periodic"]["transactions"][:1])
+        self.assertEqual(120, profile["periodic"]["today_digital_entitlement"])
+        self.assertEqual({"unlocked": True}, profile["periodic"]["active_weekly_reward"])
+        self.assertEqual({"period_end": "old", "points": 55}, profile["periodic"]["daily_results"][0])
+        self.assertTrue(profile["history"][-1]["kind"] == "manual_period_reset")
+        self.assertFalse(profile["periodic"]["transactions"][-1]["counts_toward_periods"])
+        revision = manager.data["revision"]
+        await manager.async_reset_period("alpha", "all", revision, "parent")
+        profile = manager.data["profiles"][0]
+        self.assertEqual(0, profile["score"])
+        self.assertTrue(all(profile["periodic"]["manual_reset_at"].values()))
+        self.assertEqual(0, manager.data["profiles"][1]["score"])
+        self.assertEqual(1, manager._async_sync_mirror.await_count)
+        self.assertEqual(-9, profile["history"][-1]["delta"])
+
+    async def test_reset_requires_permission_and_rejects_stale_revision(self) -> None:
+        manager = self.make_manager([self.profile("alpha", [])])
+        manager.async_can_manage = AsyncMock(return_value=False)
+        with self.assertRaises(PermissionError):
+            await manager.async_reset_period("alpha", "daily", manager.data["revision"], "other")
+        manager.async_can_manage = AsyncMock(return_value=True)
+        with self.assertRaises(manager_module.BodikConflictError):
+            await manager.async_reset_period("alpha", "daily", manager.data["revision"] - 1, "parent")
+        self.assertEqual(0, manager.store.async_save.await_count)
+
+    async def test_reset_save_failure_leaves_in_memory_data_untouched(self) -> None:
+        manager = self.make_manager([self.profile("alpha", [])])
+        manager.async_can_manage = AsyncMock(return_value=True)
+        manager.async_user_name = AsyncMock(return_value="Parent")
+        manager.store.async_save.side_effect = OSError("disk full")
+        before = deepcopy(manager.data)
+        with self.assertRaises(OSError):
+            await manager.async_reset_period("alpha", "all", manager.data["revision"], "parent")
+        self.assertEqual(before, manager.data)
+
+    def test_reset_marker_survives_normalization_and_missing_marker_migrates(self) -> None:
+        manager = self.make_manager([self.profile("alpha", [])])
+        stored = deepcopy(manager.data)
+        state = stored["profiles"][0]["periodic"]
+        state.pop("manual_reset_at")
+        migrated = manager._normalize_stored_data(stored)
+        self.assertEqual({"daily": None, "weekly": None, "monthly": None}, migrated["profiles"][0]["periodic"]["manual_reset_at"])
+        migrated["profiles"][0]["periodic"]["manual_reset_at"]["weekly"] = "2026-09-21T12:00:00+00:00"
+        again = manager._normalize_stored_data(migrated)
+        self.assertEqual("2026-09-21T12:00:00+00:00", again["profiles"][0]["periodic"]["manual_reset_at"]["weekly"])
+
+    async def test_each_selective_reset_only_zeroes_its_own_live_scope(self) -> None:
+        periodic = sys.modules["custom_components.bodik.periodic"]
+        for scope in ("daily", "weekly", "monthly"):
+            with self.subTest(scope=scope):
+                manager = self.make_manager([self.profile("alpha", [])])
+                manager.async_can_manage = AsyncMock(return_value=True)
+                manager.async_user_name = AsyncMock(return_value="Parent")
+                manager._async_sync_mirror = AsyncMock()
+                await manager.async_adjust_score("alpha", 8, "Bonus", "Parent")
+                await manager.async_reset_period("alpha", scope, manager.data["revision"], "parent")
+                profile = manager.data["profiles"][0]
+                status = periodic.current_status(
+                    profile["periodic"], profile["periodic_config"],
+                    datetime.now(timezone.utc) + timedelta(seconds=1), timezone.utc,
+                )
+                self.assertEqual(8, profile["score"])
+                self.assertEqual(
+                    {key: 0 if key == scope else 8 for key in periodic.RESET_SCOPES},
+                    {key: status[key]["points"] for key in periodic.RESET_SCOPES},
+                )
+
+    async def test_reset_markers_survive_config_save_and_backup_import(self) -> None:
+        manager = self.make_manager([self.profile("alpha", [])])
+        manager.async_can_manage = AsyncMock(return_value=True)
+        manager.async_user_name = AsyncMock(return_value="Parent")
+        manager._valid_manager_user_ids = AsyncMock(return_value=[])
+        manager._register_entity_listener = lambda: None
+        manager._schedule_periodic_tick = lambda: None
+        manager._async_sync_all_mirrors = AsyncMock()
+        await manager.async_reset_period("alpha", "monthly", manager.data["revision"], "parent")
+        marker = manager.data["profiles"][0]["periodic"]["manual_reset_at"]["monthly"]
+        backup = deepcopy(manager.data)
+        await manager.async_save_config(deepcopy(manager.data), manager.data["revision"], "parent")
+        self.assertEqual(marker, manager.data["profiles"][0]["periodic"]["manual_reset_at"]["monthly"])
+        await manager.async_import_backup({"format": "bodik-backup", "format_version": 2, "data": backup}, manager.data["revision"], "parent")
+        self.assertEqual(marker, manager.data["profiles"][0]["periodic"]["manual_reset_at"]["monthly"])
+
     async def test_set_and_reset_long_term_score_do_not_change_periodic_progress(self) -> None:
         manager = self.make_manager([self.profile("alpha", [])])
         periodic = sys.modules["custom_components.bodik.periodic"]

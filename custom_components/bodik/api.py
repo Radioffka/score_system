@@ -230,6 +230,35 @@ async def websocket_set_score(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "bodik/reset_period",
+        vol.Required("profile_id"): PROFILE_FIELD,
+        vol.Required("scope"): vol.In(("daily", "weekly", "monthly", "all")),
+        vol.Required("revision"): vol.Coerce(int),
+    }
+)
+@websocket_api.async_response
+async def websocket_reset_period(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Reset selected current performance scopes for an authorized parent."""
+    manager: BodikManager = hass.data[DOMAIN]
+    user_id = await _require_manager_permission(connection, msg["id"], manager)
+    if user_id is None:
+        return
+    try:
+        result = await manager.async_reset_period(
+            msg["profile_id"], msg["scope"], msg["revision"], user_id
+        )
+    except Exception as err:
+        _send_exception(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], {"profile": result})
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "bodik/clear_history",
         vol.Required("profile_id"): PROFILE_FIELD,
     }
@@ -264,6 +293,7 @@ def async_register_websocket_commands(
     websocket_api.async_register_command(hass, websocket_adjust_score)
     websocket_api.async_register_command(hass, websocket_apply_reason)
     websocket_api.async_register_command(hass, websocket_set_score)
+    websocket_api.async_register_command(hass, websocket_reset_period)
     websocket_api.async_register_command(hass, websocket_clear_history)
 
 

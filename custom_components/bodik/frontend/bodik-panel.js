@@ -598,6 +598,7 @@ class BodikPanel extends LitElement {
 
       ${this._renderReasonSettings()}
       ${this._renderPeriodicSettings()}
+      ${this._renderPeriodResetSettings()}
 
       <details class="card settings-section">
         <summary class="settings-section-header">
@@ -708,6 +709,30 @@ class BodikPanel extends LitElement {
             </div>`)}
         </div>
         <button class="btn" @click=${this._savePeriodicSettings} ?disabled=${this._saving}>Uložit periodické cíle</button>
+        </div>
+      </details>
+    `;
+  }
+
+  _renderPeriodResetSettings() {
+    const profile = this.activeProfile;
+    const schedule = profile.periodic_schedule || {};
+    const weekday = ["pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota", "neděle"][Number(profile.periodic_config?.weekly_tick_weekday)] || "nastavený den";
+    const next = (stamp) => stamp ? new Date(stamp).toLocaleString("cs-CZ", { timeZone: schedule.time_zone || "UTC" }) : "nezjištěno";
+    return html`
+      <details class="card settings-section">
+        <summary class="settings-section-header"><h2>Administrativní reset bodů · ${profile.name}</h2><span class="chevron" aria-hidden="true"></span></summary>
+        <div class="settings-section-body">
+          <p><strong>Profil: ${profile.name}</strong></p>
+          <p class="note">Reset se týká jen aktuálního období profilu ${profile.name}. Historie transakcí, uzavřené výsledky, již přiznaný digitální čas a týdenní odměna zůstanou zachovány. Další body se začnou počítat od resetu.</p>
+          <p class="note small">Automatické uzávěry (${schedule.time_zone || "místní čas HA"}): denně v 00:00 (nejbližší ${next(schedule.daily)}); týdně ${weekday} v ${profile.periodic_config?.weekly_tick_time || "17:00"} (nejbližší ${next(schedule.weekly)}); měsíčně 1. den v 00:00 (nejbližší ${next(schedule.monthly)}). Ruční reset tyto termíny neposouvá.</p>
+          <div class="backup-actions">
+            <button class="btn ghost" @click=${() => this._resetPeriod("daily")} ?disabled=${this._saving}>Resetovat dnešní výkon</button>
+            <button class="btn ghost" @click=${() => this._resetPeriod("weekly")} ?disabled=${this._saving}>Resetovat týdenní výkon</button>
+            <button class="btn ghost" @click=${() => this._resetPeriod("monthly")} ?disabled=${this._saving}>Resetovat měsíční výkon</button>
+          </div>
+          <p class="note small">Úplný reset navíc vynuluje dlouhodobé skóre. Ostatní nastavení profilu zůstanou zachována.</p>
+          <button class="btn danger" @click=${() => this._resetPeriod("all")} ?disabled=${this._saving}>Úplný reset skóre a aktuálního výkonu</button>
         </div>
       </details>
     `;
@@ -890,6 +915,27 @@ class BodikPanel extends LitElement {
       this._showToast(`Dlouhodobé skóre bylo nastaveno na ${this.score}. Periodický výkon se nemění.`);
     } catch (error) {
       this._showToast(this._errorMessage(error, "Změnu skóre nelze uložit."), true, 7000);
+    } finally {
+      this._saving = false;
+    }
+  }
+
+  async _resetPeriod(scope) {
+    if (!this._canManage || this._saving || !this.activeProfile) return;
+    const profile = this.activeProfile;
+    const labels = { daily: "dnešní výkon", weekly: "týdenní výkon", monthly: "měsíční výkon", all: "DLOUHODOBÉ SKÓRE A DENNÍ, TÝDENNÍ I MĚSÍČNÍ VÝKON" };
+    const detail = scope === "all"
+      ? "Toto je úplný reset. Dlouhodobé skóre i aktuální výkon všech tří období budou vynulovány."
+      : "Dlouhodobé skóre a ostatní periodické výkony se nezmění.";
+    if (!confirm(`Profil: ${profile.name}\nResetovat ${labels[scope]}?\n${detail}\nHistorie transakcí, uzavřené výsledky, nastavení a již přiznané nároky zůstanou zachovány.`)) return;
+    if (scope === "all" && !confirm(`Potvrďte ÚPLNÝ reset profilu ${profile.name}. Tuto změnu aktuálního výkonu nelze vrátit zpět bez zálohy.`)) return;
+    this._saving = true;
+    try {
+      await this.hass.callWS({ type: "bodik/reset_period", profile_id: profile.id, scope, revision: this._revision });
+      await this._loadAllData({ silent: true });
+      this._showToast(`Reset profilu ${profile.name} byl uložen.`);
+    } catch (error) {
+      this._showToast(this._errorMessage(error, "Reset nelze uložit."), true, 7000);
     } finally {
       this._saving = false;
     }

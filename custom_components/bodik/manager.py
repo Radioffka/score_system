@@ -49,6 +49,7 @@ from .family_config import (
     is_family_profile,
 )
 from .periodic import (
+    RESET_SCOPES,
     PeriodicValidationError,
     close_periods,
     current_status,
@@ -56,6 +57,9 @@ from .periodic import (
     first_paying_threshold,
     iso_utc,
     new_state,
+    next_daily_boundary,
+    next_weekly_boundary,
+    next_monthly_boundary,
     next_boundary,
     parse_utc,
     validate_config,
@@ -555,6 +559,17 @@ class BodikManager:
                 "monthly_initial_partial",
             ):
                 result[key] = bool(raw.get(key, result[key]))
+            markers = raw.get("manual_reset_at", {})
+            if not isinstance(markers, dict):
+                raise BodikValidationError("Časové značky ručního resetu jsou neplatné.")
+            for scope in RESET_SCOPES:
+                marker = markers.get(scope)
+                result["manual_reset_at"][scope] = (
+                    iso_utc(parse_utc(str(marker))) if marker is not None else None
+                )
+            after = raw.get("manual_reset_after", {})
+            if not isinstance(after, dict):
+                raise BodikValidationError("Pozice ručního resetu jsou neplatné.")
             transactions = raw.get("transactions", [])
             result["transactions"] = []
             if isinstance(transactions, list):
@@ -576,6 +591,11 @@ class BodikManager:
                             "category": _text(item.get("category"), 40) or None,
                         }
                     )
+            for scope in RESET_SCOPES:
+                cursor = after.get(scope, 0)
+                if isinstance(cursor, bool) or not isinstance(cursor, int) or not 0 <= cursor <= len(result["transactions"]):
+                    raise BodikValidationError("Pozice ručního resetu je neplatná.")
+                result["manual_reset_after"][scope] = cursor if result["manual_reset_at"][scope] else 0
             for key in ("daily_results", "weekly_results", "monthly_results"):
                 values = raw.get(key, [])
                 result[key] = deepcopy(values[-MAX_PERIOD_RESULTS:]) if isinstance(values, list) else []
@@ -792,6 +812,14 @@ class BodikManager:
             )
             profile["reason_status"] = self.reason_status(profile, now)
             profile["generated_rules"] = self.generated_rules_summary(profile)
+            state = profile["periodic"]
+            config = profile["periodic_config"]
+            profile["periodic_schedule"] = {
+                "time_zone": self.hass.config.time_zone,
+                "daily": iso_utc(next_daily_boundary(parse_utc(state["daily_period_started_at"]), zone)),
+                "weekly": iso_utc(next_weekly_boundary(parse_utc(state["weekly_period_started_at"]), config, zone)),
+                "monthly": iso_utc(next_monthly_boundary(parse_utc(state["monthly_period_started_at"]), zone)),
+            }
         if not can_manage:
             client_data["admin_user_ids"] = []
         payload: dict[str, Any] = {
@@ -1053,6 +1081,62 @@ class BodikManager:
             await self._async_sync_mirror(result["profile"])
             self._fire_updated("score", result["profile"]["id"])
         return result["profile"]
+
+    async def async_reset_period(
+        self, identifier: str, scope: str, expected_revision: int, user_id: str
+    ) -> dict[str, Any]:
+        """Reset current progress with durable per-scope baselines, never deleting ledger rows."""
+        if not await self.async_can_manage(user_id):
+            raise PermissionError("Uživatel nemá oprávnění spravovat Bodík.")
+        if scope not in (*RESET_SCOPES, "all"):
+            raise BodikValidationError("Neplatný rozsah resetu.")
+        zone = self._time_zone()
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            if expected_revision != self.data["revision"]:
+                raise BodikConflictError("Data se mezitím změnila. Obnovte stránku a zkuste to znovu.")
+            updated = deepcopy(self.data)
+            profile = next(
+                (item for item in updated["profiles"] if item["id"] == identifier), None
+            )
+            if profile is None:
+                raise BodikValidationError("Profil nebyl nalezen.")
+            state = profile["periodic"]
+            closed = close_periods(state, profile["periodic_config"], now, zone)
+            if closed:
+                for key in ("daily_results", "weekly_results", "monthly_results"):
+                    state[key] = state[key][-MAX_PERIOD_RESULTS:]
+            for selected in RESET_SCOPES if scope == "all" else (scope,):
+                state["manual_reset_at"][selected] = iso_utc(now)
+                state["manual_reset_after"][selected] = len(state["transactions"])
+            previous = _integer(profile["score"])
+            if scope == "all" and self._clamp_for_entity(profile, 0) != 0:
+                raise BodikValidationError("Zrcadlová entita nepovoluje skóre 0; úplný reset nelze provést.")
+            following = 0 if scope == "all" else previous
+            profile["score"] = following
+            descriptions = {"daily": "Dnešní výkon", "weekly": "Týdenní výkon", "monthly": "Měsíční výkon", "all": "Dlouhodobé skóre a denní, týdenní i měsíční výkon"}
+            entry = self._history_entry(
+                f"Administrativní reset: {descriptions[scope]}", following - previous,
+                previous, following, await self.async_user_name(user_id),
+                kind="manual_period_reset", counts_toward_periods=False, occurred_at=now,
+            )
+            profile["history"] = [*profile["history"], entry][-MAX_HISTORY:]
+            state["transactions"].append({
+                "id": uuid4().hex, "time": entry["time"], "delta": entry["delta"],
+                "kind": "manual_period_reset", "counts_toward_periods": False,
+                "reason_id": None, "category": None,
+            })
+            updated["revision"] += 1
+            updated["updated_at"] = iso_utc(now)
+            await self.store.async_save(updated)
+            self.data = updated
+            result = deepcopy(profile)
+        if closed:
+            self._schedule_periodic_tick()
+        if scope == "all" and previous != 0:
+            await self._async_sync_mirror(result)
+        self._fire_updated("periodic_reset", result["id"])
+        return result
 
     async def _async_commit_score_locked(
         self,

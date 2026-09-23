@@ -74,6 +74,48 @@ class PeriodicEngineTest(unittest.TestCase):
         self.assertEqual(-3, status["daily"]["points"])
         self.assertEqual(33, status["daily"]["remaining"])
 
+    def test_selective_reset_preserves_ledger_and_other_scopes(self) -> None:
+        state = periodic.new_state(moment("2026-09-21T00:00:00+00:00"), self.config, PRAGUE)
+        self.transaction(state, "2026-09-21T08:00:00+00:00", 12)
+        before = deepcopy(state["transactions"])
+        state["manual_reset_at"]["daily"] = "2026-09-21T10:00:00+00:00"
+        status = periodic.current_status(state, self.config, moment("2026-09-21T10:01:00+00:00"), PRAGUE)
+        self.assertEqual((0, 12, 12), tuple(status[key]["points"] for key in periodic.RESET_SCOPES))
+        self.transaction(state, "2026-09-21T11:00:00+00:00", -3)
+        status = periodic.current_status(state, self.config, moment("2026-09-21T12:00:00+00:00"), PRAGUE)
+        self.assertEqual((-3, 9, 9), tuple(status[key]["points"] for key in periodic.RESET_SCOPES))
+        self.assertEqual(before, state["transactions"][:1])
+
+    def test_reset_cursor_disambiguates_transactions_with_identical_timestamps(self) -> None:
+        state = periodic.new_state(moment("2026-09-21T00:00:00+00:00"), self.config, PRAGUE)
+        self.transaction(state, "2026-09-21T10:00:00+00:00", 8)
+        state["manual_reset_at"]["daily"] = "2026-09-21T10:00:00+00:00"
+        state["manual_reset_after"]["daily"] = len(state["transactions"])
+        self.transaction(state, "2026-09-21T10:00:00+00:00", 3)
+        status = periodic.current_status(state, self.config, moment("2026-09-21T10:01:00+00:00"), PRAGUE)
+        self.assertEqual(3, status["daily"]["points"])
+        self.assertEqual(11, status["weekly"]["points"])
+
+    def test_reset_marker_applies_only_to_its_natural_period_and_catchup(self) -> None:
+        state = periodic.new_state(moment("2026-09-21T00:00:00+00:00"), self.config, PRAGUE)
+        self.transaction(state, "2026-09-21T08:00:00+00:00", 12)
+        self.transaction(state, "2026-09-21T11:00:00+00:00", 5)
+        self.transaction(state, "2026-09-22T08:00:00+00:00", 7)
+        state["manual_reset_at"]["daily"] = "2026-09-21T10:00:00+00:00"
+        stopped = moment("2026-09-23T12:00:00+00:00")
+        self.assertTrue(periodic.close_periods(state, self.config, stopped, PRAGUE))
+        self.assertEqual(5, next(item["points"] for item in state["daily_results"] if item["local_date"] == "2026-09-21"))
+        self.assertEqual(7, next(item["points"] for item in state["daily_results"] if item["local_date"] == "2026-09-22"))
+        self.assertFalse(periodic.close_periods(state, self.config, stopped, PRAGUE))
+
+    def test_three_reset_markers_do_not_change_natural_boundaries(self) -> None:
+        state = periodic.new_state(moment("2026-09-21T00:00:00+00:00"), self.config, PRAGUE)
+        starts = {key: state[f"{key}_period_started_at"] for key in periodic.RESET_SCOPES}
+        for key in periodic.RESET_SCOPES:
+            state["manual_reset_at"][key] = "2026-09-21T10:00:00+00:00"
+        self.assertEqual(starts, {key: state[f"{key}_period_started_at"] for key in periodic.RESET_SCOPES})
+        self.assertEqual(0, periodic.current_status(state, self.config, moment("2026-09-21T11:00:00+00:00"), PRAGUE)["monthly"]["points"])
+
     def test_restart_catch_up_and_duplicate_close_are_idempotent(self) -> None:
         state = periodic.new_state(moment("2026-09-01T10:00:00+00:00"), self.config, PRAGUE)
         self.transaction(state, "2026-09-02T10:00:00+00:00", 35)

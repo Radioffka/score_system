@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 UTC = timezone.utc
 WEEKDAYS = range(7)
+RESET_SCOPES = ("daily", "weekly", "monthly")
 DEFAULT_PAYOUT_BANDS = [
     {"minimum_percent": 0, "payout_percent": 0},
     {"minimum_percent": 50, "payout_percent": 40},
@@ -255,15 +256,19 @@ def new_state(now: datetime, config: dict[str, Any], zone: ZoneInfo) -> dict[str
         "daily_results": [],
         "weekly_results": [],
         "monthly_results": [],
+        "manual_reset_at": {scope: None for scope in RESET_SCOPES},
+        "manual_reset_after": {scope: 0 for scope in RESET_SCOPES},
         "today_digital_entitlement": 0,
         "active_weekly_reward": None,
     }
 
 
-def transaction_sum(state: dict[str, Any], start: datetime, end: datetime) -> int:
+def transaction_sum(state: dict[str, Any], start: datetime, end: datetime, after: int = 0) -> int:
     """Sum eligible transactions in the half-open UTC interval [start, end)."""
     total = 0
-    for item in state.get("transactions", []):
+    for index, item in enumerate(state.get("transactions", [])):
+        if index < after:
+            continue
         if not item.get("counts_toward_periods", False):
             continue
         try:
@@ -273,6 +278,22 @@ def transaction_sum(state: dict[str, Any], start: datetime, end: datetime) -> in
         if start <= when < end:
             total += int(item.get("delta", 0))
     return total
+
+
+def effective_period_start(
+    state: dict[str, Any], scope: str, natural_start: datetime, end: datetime,
+    *, include_end: bool = False,
+) -> tuple[datetime, int]:
+    """Apply a reset marker only within its own natural period."""
+    start = max(natural_start, parse_utc(state["tracking_started_at"]))
+    after = 0
+    marker = state.get("manual_reset_at", {}).get(scope)
+    if marker is not None:
+        reset_at = parse_utc(marker)
+        if natural_start <= reset_at < end or (include_end and reset_at == end):
+            start = max(start, reset_at)
+            after = state.get("manual_reset_after", {}).get(scope, 0)
+    return start, after
 
 
 def _append_once(results: list[dict[str, Any]], snapshot: dict[str, Any]) -> bool:
@@ -286,12 +307,11 @@ def close_periods(state: dict[str, Any], config: dict[str, Any], now: datetime, 
     """Idempotently close every elapsed daily, weekly and monthly period."""
     changed = False
     now = now.astimezone(UTC)
-    tracking = parse_utc(state["tracking_started_at"])
-
     start = parse_utc(state["daily_period_started_at"])
     while (end := next_daily_boundary(start, zone)) <= now:
         partial = bool(state.get("daily_initial_partial", False))
-        points = transaction_sum(state, max(start, tracking), end)
+        effective, after = effective_period_start(state, "daily", start, end)
+        points = transaction_sum(state, effective, end, after)
         entitlement = digital_entitlement(points, config)
         snapshot = {
             "period_start": iso_utc(start), "period_end": iso_utc(end),
@@ -311,7 +331,8 @@ def close_periods(state: dict[str, Any], config: dict[str, Any], now: datetime, 
     start = parse_utc(state["weekly_period_started_at"])
     while (end := next_weekly_boundary(start, config, zone)) <= now:
         partial = bool(state.get("weekly_initial_partial", False))
-        points = transaction_sum(state, max(start, tracking), end)
+        effective, after = effective_period_start(state, "weekly", start, end)
+        points = transaction_sum(state, effective, end, after)
         reward_cfg = config["weekly_reward"]
         unlocked = bool(reward_cfg["enabled"] and points >= config["weekly_target"])
         snapshot = {
@@ -336,7 +357,8 @@ def close_periods(state: dict[str, Any], config: dict[str, Any], now: datetime, 
     start = parse_utc(state["monthly_period_started_at"])
     while (end := next_monthly_boundary(start, zone)) <= now:
         partial = bool(state.get("monthly_initial_partial", False))
-        points = transaction_sum(state, max(start, tracking), end)
+        effective, after = effective_period_start(state, "monthly", start, end)
+        points = transaction_sum(state, effective, end, after)
         payout = allowance(points, config)
         snapshot = {
             "period_start": iso_utc(start), "period_end": iso_utc(end),
@@ -357,9 +379,12 @@ def current_status(state: dict[str, Any], config: dict[str, Any], now: datetime,
     daily_start = parse_utc(state["daily_period_started_at"])
     weekly_start = parse_utc(state["weekly_period_started_at"])
     monthly_start = parse_utc(state["monthly_period_started_at"])
-    daily_points = transaction_sum(state, daily_start, now)
-    weekly_points = transaction_sum(state, weekly_start, now)
-    monthly_points = transaction_sum(state, monthly_start, now)
+    daily_effective, daily_after = effective_period_start(state, "daily", daily_start, now, include_end=True)
+    weekly_effective, weekly_after = effective_period_start(state, "weekly", weekly_start, now, include_end=True)
+    monthly_effective, monthly_after = effective_period_start(state, "monthly", monthly_start, now, include_end=True)
+    daily_points = transaction_sum(state, daily_effective, now, daily_after)
+    weekly_points = transaction_sum(state, weekly_effective, now, weekly_after)
+    monthly_points = transaction_sum(state, monthly_effective, now, monthly_after)
     estimated = allowance(monthly_points, config)
     first_payout = first_paying_threshold(config)
     if first_payout is not None:
