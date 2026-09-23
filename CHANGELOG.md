@@ -1,5 +1,12 @@
 # Přehled změn
 
+## 9.3.0
+
+- karty důvodů v Nastavení mají kompaktní responzivní rozložení a přístupné menu akcí místo trvale viditelných tlačítek;
+- správce může samostatně resetovat aktuální denní, týdenní a měsíční výkon nebo všechny aktuální body včetně dlouhodobého skóre;
+- ruční reset používá trvalé účetní značky bez mazání transakcí, historie či uzavřených výsledků a nemění automatické uzávěry;
+- Nastavení ukazuje automatické uzávěry v místním čase Home Assistantu.
+
 ## 9.2.2
 
 - přepracované karty důvodů v Nastavení s výraznějším oddělením, stabilním rozvržením a modernějším vzhledem;
